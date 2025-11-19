@@ -1,0 +1,62 @@
+# Windsurf AI Rules for InnoTone Training Project
+
+## File Creation Rule
+**IMPORTANT**: If a file does not exist and the user requests code for it, provide the complete code assuming the user will create the file themselves. Do not attempt to create files - just provide the full, ready-to-use code.
+
+## Project Context
+This is a FastAPI-based training orchestration system that:
+- Manages GPU training jobs via Lambda Labs API
+- Simulates EC2 instances and Docker containers
+- Uses Tortoise ORM with SQLite/PostgreSQL
+- Integrates with MinIO/S3 for storage
+- Handles SSH connections for remote execution
+
+## Code Style Guidelines
+
+### Python
+- Use type hints for all function parameters and return values
+- Follow PEP 8 naming conventions
+- Use async/await for I/O operations
+- Add docstrings for classes and public methods
+- Keep functions focused and under 50 lines when possible
+
+### Testing
+- Follow the pattern from [tests/test_01_database.py](cci:7://file:///Users/deepankarpal/Projects/innotone/innotone-training/tests/test_01_database.py:0:0-0:0)
+- Use descriptive test names: `test_N_description`
+- Include emoji indicators: ✅ PASSED, ❌ FAILED, 📊 for data
+- Add try-except blocks with traceback for debugging
+- Print clear section headers with `=` * 70
+- Return test results for summary reporting
+
+### FastAPI Endpoints
+- Use proper HTTP status codes
+- Include response models with Pydantic
+- Add endpoint descriptions and tags
+- Handle errors with HTTPException
+- Use dependency injection for shared resources
+
+### Database Models
+- Use Tortoise ORM models in `models/` directory
+- Define proper relationships with ForeignKeyField
+- Use Enums for status fields
+- Include JSONField for flexible metadata
+- Add proper indexes for query performance
+
+### Storage Operations
+- Use [StorageClient](cci:2://file:///Users/deepankarpal/Projects/innotone/innotone-training/scripts/storage_client.py:12:0-211:23) class for S3/MinIO operations
+- Always check [ensure_bucket_exists()](cci:1://file:///Users/deepankarpal/Projects/innotone/innotone-training/scripts/storage_client.py:80:4-90:61) before uploads
+- Handle both MinIO (local) and AWS S3 (production)
+- Use proper content types for uploads
+- Clean up temporary files after operations
+
+### Configuration
+- Load environment variables with `python-dotenv`
+- Use [.env](cci:7://file:///Users/deepankarpal/Projects/innotone/innotone-training/.env:0:0-0:0) for local development settings
+- Never hardcode credentials or API keys
+- Support both local (MinIO) and production (S3) modes
+
+## Import Organization
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+4. Blank line between*

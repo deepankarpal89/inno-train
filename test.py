@@ -1,14 +1,5 @@
-import asyncio
-
-async def fetch_data():
-    print("Start fetching")
-    await asyncio.sleep(2)  # simulate IO work
-    print("Done fetching")
-    return {"data": 123}
-
-async def main():
-    print("Before await")
-    result = await fetch_data()  # execution pauses here until fetch_data finishes
-    print("After await:", result)
-
-asyncio.run(main())
+from scripts.utils import parse_timestamp
+event = {"timestamp": "2025-11-12 21:06:47", "level": "INFO", "phase": "EVAL_MODEL", "event": "end", "message": "Finished evaluation for cv_epoch_1", "data": {"elapsed": 1733579110.71}}
+event_timestamp = parse_timestamp(event.get("timestamp"))
+print(event_timestamp)
+print(type(event_timestamp))

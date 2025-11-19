@@ -1,7 +1,15 @@
 #!/bin/bash
 
 # Configuration
-IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_lambda"  # Default image, can be overridden with command line argument
+# Detect processor architecture and set appropriate image tag
+ARCH="$(uname -m)"
+if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+    IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_lambda"  # ARM image
+elif [[ "$ARCH" == "x86_64" ]]; then
+    IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_amd64"   # AMD64 image
+else
+    IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_multi"   # Multi-arch image for other architectures
+fi
 OUTPUT_DIR="output"
 LOG_FILE="${OUTPUT_DIR}/execution.log"
 CONTAINER_NAME="innotrain"
