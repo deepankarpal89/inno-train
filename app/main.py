@@ -28,45 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shutdown
     logger.info("🛑 Shutting down InnoTrain API server")
 
-    # Cancel all active background tasks
-    from app.api.endpoints import active_background_tasks, active_orchestrators
-
-    if active_background_tasks:
-        logger.info(
-            f"📋 Cancelling {len(active_background_tasks)} active background tasks..."
-        )
-        for job_uuid, task in active_background_tasks.items():
-            if not task.done():
-                logger.info(f"⏹️ Cancelling task for job {job_uuid}")
-                task.cancel()
-
-        # Wait for tasks to complete cancellation
-        if active_background_tasks:
-            import asyncio
-
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(
-                        *active_background_tasks.values(), return_exceptions=True
-                    ),
-                    timeout=30.0,
-                )
-                logger.info("✅ All background tasks cancelled successfully")
-            except asyncio.TimeoutError:
-                logger.warning("⚠️ Some background tasks did not cancel within timeout")
-
-    # Clean up orchestrators
-    if active_orchestrators:
-        logger.info(f"🧹 Cleaning up {len(active_orchestrators)} orchestrators...")
-        for job_uuid, orchestrator in list(active_orchestrators.items()):
-            try:
-                # Attempt graceful cleanup
-                if hasattr(orchestrator, "cleanup"):
-                    await orchestrator.cleanup()
-            except Exception as e:
-                logger.warning(f"Failed to cleanup orchestrator {job_uuid}: {e}")
-        active_orchestrators.clear()
-        logger.info("✅ Orchestrators cleaned up")
+    
 
     logger.info("📊 Closing database connections...")
     await close_db()
