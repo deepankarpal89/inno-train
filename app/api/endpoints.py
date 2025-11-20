@@ -109,7 +109,7 @@ class JobDetailResponse(BaseModel):
 
 async def _run_training_job_background(
     request_data: Dict[str, Any], job_uuid: str
-) -> str:
+    ) -> str:
     """Run complete training job in background.
 
     Args:
@@ -151,7 +151,7 @@ async def hello_world():
 @router.post("/v1/training/start", response_model=TrainingResponse)
 async def start_training_job(
     request: TrainingRequest, background_tasks: BackgroundTasks
-):
+    ):
     """
     Start a new GPU training job.
 
@@ -294,7 +294,7 @@ async def list_training_jobs(
     project_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-):
+    ):
     """
     List all training jobs with optional filtering.
 
