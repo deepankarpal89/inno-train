@@ -9,8 +9,8 @@ from tortoise.models import Model
 
 class StepType(str, Enum):
     """Step type enum for TrainingIteration"""
-
-    TRAJECTORY_GENERATION = "trajectory_generation"
+    PROJECT = 'project'
+    TRAJECTORY = "trajectory"
     TRAINING = "training"
     EVALUATION = "evaluation"
     ITERATION = "iteration"
@@ -33,9 +33,7 @@ class TrainingIteration(Model):
     time_taken = fields.FloatField(null=True)
 
     # Foreign key to TrainingJob
-    training_job = fields.ForeignKeyField(
-        "models.TrainingJob", related_name="iterations", on_delete=fields.CASCADE
-    )
+    training_job = fields.ForeignKeyField("models.TrainingJob", related_name="iterations", on_delete=fields.CASCADE)
 
     iteration_number = fields.IntField()
     step_type = fields.CharEnumField(StepType, default=StepType.ITERATION)

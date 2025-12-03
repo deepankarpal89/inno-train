@@ -4,15 +4,14 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
-
 from dotenv import load_dotenv
 
 from scripts.lambda_client import LambdaClient
 from scripts.project_yaml_builder import ProjectYamlBuilder
 from scripts.s3_to_server_transfer import S3ToServerTransfer
+from scripts.utils import ist_now
 from scripts.ssh_executor import SshExecutor
 from app.services.training_job_monitor import TrainingJobMonitor
 from models.training_job import TrainingJob, TrainingJobStatus
@@ -91,17 +90,54 @@ class WorkflowState:
 class TrainingWorkflow:
     """Orchestrates training jobs with clean separation of concerns."""
 
-    def __init__(self, logger: Optional[logging.Logger] = None):
-        """Initialize workflow with required clients."""
+    def __init__(
+        self,
+        job_uuid: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
+        job: Optional[TrainingJob] = None,
+    ):
+        """Private constructor. Use create() or create_with_job() factory methods instead."""
         load_dotenv()
         self.logger = logger or self._create_logger()
 
         # Core services (always available)
-        self.lambda_client = LambdaClient()
+        self.gpu_client = LambdaClient()
         self.file_transfer = S3ToServerTransfer(logger=self.logger)
 
         # Job-specific state (reset for each job)
         self._reset_job_state()
+
+        # Set job data
+        self.job_uuid = job_uuid
+        self.job = job
+        if job_uuid and job:
+            self.state = WorkflowState(job_uuid=job_uuid)
+            if job.machine_config:
+                self.state.instance_id = job.machine_config.get("instance_id", None)
+                self.state.instance_ip = job.machine_config.get("instance_ip", None)
+            if job.training_request:
+                self.data = self._parse_request_data(job.training_request)
+
+    @classmethod
+    async def for_existing_job(
+        cls, job_uuid: str, logger: Optional[logging.Logger] = None
+    ):
+        """Create workflow from an existing job in the database."""
+        job = await TrainingJob.get(uuid=job_uuid)
+        return cls(job_uuid=job_uuid, logger=logger, job=job)
+
+    @classmethod
+    def for_new_job(cls, logger: Optional[logging.Logger] = None):
+        """Create workflow for a new job (will create job record later)."""
+        return cls(job_uuid=None, logger=logger, job=None)
+
+    def __post_init__(self):
+        required_vars = ["BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+        missing = [var for var in required_vars if not os.getenv(var)]
+        if missing:
+            raise EnvironmentError(
+                f"Missing required environment variables: {', '.join(missing)}"
+            )
 
     def _reset_job_state(self) -> None:
         """Reset all job-specific state for a new training job."""
@@ -109,6 +145,9 @@ class TrainingWorkflow:
         self.monitor: Optional[TrainingJobMonitor] = None
         self.state: Optional[WorkflowState] = None
         self.job: Optional[TrainingJob] = None
+        self.request_data: Optional[Dict[str, Any]] = None
+        self.data: Optional[Dict[str, Any]] = None
+        self.job_uuid: Optional[str] = None
 
     # ==================== Public API ====================
 
@@ -136,15 +175,15 @@ class TrainingWorkflow:
         try:
             # Initialize job and state
             if not self.job:
-                job_uuid = await self._initialize_job(request_data)
+                self.job_uuid = await self._initialize_job(request_data)
             else:
-                job_uuid = str(self.job.uuid)
+                self.job_uuid = str(self.job.uuid)
 
-            self.state = WorkflowState(job_uuid=job_uuid)
-            self.logger.info(f"🚀 Starting training job {job_uuid}")
+            self.state = WorkflowState(job_uuid=self.job_uuid)
+            self.logger.info(f"🚀 Starting training job {self.job_uuid}")
 
             # Build and upload configuration
-            self.state.yaml_builder = await self._prepare_configuration(request_data)
+            self.state.yaml_builder = await self._prepare_configuration()
 
             # Launch GPU and setup connection
             await self._provision_gpu_instance()
@@ -156,52 +195,45 @@ class TrainingWorkflow:
             # Execute training with monitoring (blocks until completion)
             await self._execute_training_with_monitoring()
 
-            # Download outputs
-            await self._download_outputs()
-
-            self.logger.info(f"✅ Training job {job_uuid} completed successfully")
-            return job_uuid
+            self.job.status = TrainingJobStatus.COMPLETED
+            self.job.save(update_fields=["status"])
+            self.logger.info(f"✅ Training job {self.job_uuid} completed successfully")
+            return self.job_uuid
 
         except Exception as e:
             self.logger.error(f"❌ Training job failed: {str(e)}")
             await self._handle_failure(str(e))
             raise
         finally:
-            # Always cleanup resources
-            await self._cleanup_resources()
+            try:
+                # Always cleanup resources
+                await self._cleanup_resources()
+                self.job.completed_at = ist_now()
+                await self.job.save(update_fields=["completed_at"])
+            except Exception as cleanup_error:
+                self.logger.error(f"Failed to cleanup resources: {str(cleanup_error)}")
+                if 'e' in locals():
+                    raise e from cleanup_error
+                raise
+                
 
-    async def get_job_status(self, job_uuid: str) -> TrainingJobStatus:
-        """Get the current status of a training job."""
-        try:
-            job = await TrainingJob.get(uuid=job_uuid)
-            return job.status
-        except Exception as e:
-            self.logger.error(f"Failed to get job status: {e}")
-            raise
-
-    async def cancel_training(self, job_uuid: str) -> bool:
+    async def cancel_training(self) -> bool:
         """Cancel a running training job."""
         try:
-            job = await TrainingJob.get(uuid=job_uuid)
-
-            if job.status in [TrainingJobStatus.COMPLETED, TrainingJobStatus.FAILED]:
+            if self.job.status in [
+                TrainingJobStatus.COMPLETED,
+                TrainingJobStatus.FAILED,
+            ]:
                 return False
 
-            # Stop monitoring
-            if self.monitor:
-                await self.monitor.stop_monitoring()
-
-            # Terminate instance
-            machine_config = job.machine_config or {}
-            if instance_id := machine_config.get("instance_id"):
-                await self._cleanup_instance(instance_id)
+            self._cleanup_resources()
 
             # Update status
-            job.status = TrainingJobStatus.CANCELLED
-            job.completed_at = datetime.now()
-            await job.save()
+            self.job.status = TrainingJobStatus.CANCELLED
+            self.job.completed_at = ist_now()
+            await self.job.save()
 
-            self.logger.info(f"🛑 Cancelled job {job_uuid}")
+            self.logger.info(f"🛑 Cancelled job {self.job_uuid}")
             return True
 
         except Exception as e:
@@ -222,22 +254,23 @@ class TrainingWorkflow:
         Raises:
             Exception: If job creation fails
         """
-        data = self._parse_request_data(request_data)
+        self.request_data = request_data
+        self.data = self._parse_request_data(self.request_data)
 
         self.job = await TrainingJob.create(
             uuid=uuid.uuid4(),
-            project_id=data.get("project", {}).get("id"),
-            training_run_id=data.get("training_run_id"),
-            training_request=request_data,
+            project_id=self.data.get("project", {}).get("id"),
+            training_run_id=self.data.get("training_run_id"),
+            training_request=self.request_data,
             status=TrainingJobStatus.PENDING,
+            created_at = ist_now(),
         )
+        self.job_uuid = str(self.job.uuid)
 
-        self.logger.info(f"📝 Created job record: {self.job.uuid}")
-        return str(self.job.uuid)
+        self.logger.info(f"📝 Created job record: {self.job_uuid}")
+        return self.job_uuid
 
-    async def _prepare_configuration(
-        self, request_data: Dict[str, Any]
-    ) -> ProjectYamlBuilder:
+    async def _prepare_configuration(self) -> ProjectYamlBuilder:
         """Build and upload project YAML configuration.
 
         Args:
@@ -249,10 +282,9 @@ class TrainingWorkflow:
         Raises:
             Exception: If YAML upload to S3 fails
         """
-        data = self._parse_request_data(request_data)
 
         yaml_builder = ProjectYamlBuilder()
-        yaml_builder._add_data(data)
+        yaml_builder._add_data(self.data)
         self.job.project_yaml_config = yaml_builder.get_yaml_dict()
         await self.job.save()
 
@@ -267,43 +299,36 @@ class TrainingWorkflow:
     async def _provision_gpu_instance(self) -> None:
         """Launch GPU instance and update job record."""
         try:
-            gpu_config = self.lambda_client.list_available_instances()
+            gpu_config = self.gpu_client.list_available_instances()
             if not gpu_config:
-                raise InfrastructureError(
-                    "No available GPU instances", job_uuid=self.state.job_uuid
-                )
+                raise InfrastructureError("No available GPU instances")
 
-            instance_config = self.lambda_client.launch_instance(
+            instance_config = self.gpu_client.launch_instance(
                 gpu_config["name"],
                 gpu_config["region"],
                 name=f"{WorkflowConstants.INSTANCE_NAME_PREFIX}-{self.state.job_uuid[:8]}",
             )
 
             if not instance_config:
-                raise InfrastructureError(
-                    "Failed to launch GPU instance", job_uuid=self.state.job_uuid
-                )
+                raise InfrastructureError("Failed to launch GPU instance")
 
             self.state.instance_id = instance_config["id"]
             self.state.instance_ip = instance_config["ip"]
 
             # Update job record
-            job = await TrainingJob.get(uuid=self.state.job_uuid)
-            job.machine_config = {
+            self.job.machine_config = {
                 "instance_id": self.state.instance_id,
                 "instance_ip": self.state.instance_ip,
                 "instance_type": gpu_config["name"],
                 "region": gpu_config["region"],
             }
-            await job.save()
+            await self.job.save()
 
             self.logger.info(f"✅ GPU instance launched: {self.state.instance_id}")
         except Exception as e:
             if isinstance(e, InfrastructureError):
                 raise
-            raise InfrastructureError(
-                f"GPU provisioning failed: {str(e)}", job_uuid=self.state.job_uuid
-            )
+            raise InfrastructureError(f"GPU provisioning failed: {str(e)}")
 
     async def _establish_ssh_connection(self) -> None:
         """Setup SSH connection with retry logic."""
@@ -319,8 +344,7 @@ class TrainingWorkflow:
             except Exception as e:
                 if attempt == WorkflowConstants.SSH_RETRY_ATTEMPTS - 1:
                     raise InfrastructureError(
-                        f"SSH connection failed after {WorkflowConstants.SSH_RETRY_ATTEMPTS} attempts: {str(e)}",
-                        job_uuid=self.state.job_uuid,
+                        f"SSH connection failed after {WorkflowConstants.SSH_RETRY_ATTEMPTS} attempts: {str(e)}"
                     )
 
                 wait_time = WorkflowConstants.SSH_RETRY_BASE_DELAY**attempt
@@ -365,10 +389,7 @@ class TrainingWorkflow:
             )
             self.logger.info(f"📤 Transferred {description}")
         except Exception as e:
-            raise FileTransferError(
-                f"Failed to transfer {description}: {str(e)}",
-                job_uuid=self.state.job_uuid,
-            )
+            raise FileTransferError(f"Failed to transfer {description}: {str(e)}")
 
     async def _upload_training_script(self) -> None:
         """Upload the training script to the GPU server."""
@@ -378,16 +399,19 @@ class TrainingWorkflow:
                 raise FileNotFoundError(f"Training script not found: {script_path}")
 
             await asyncio.to_thread(
-                self.ssh_executor.upload_file,
-                script_path,
-                script_path,  # Upload to same name on remote
+                self.ssh_executor.upload_file, script_path, script_path
             )
             self.logger.info(f"📤 Uploaded training script: {script_path}")
         except Exception as e:
-            raise FileTransferError(
-                f"Failed to upload training script: {str(e)}",
-                job_uuid=self.state.job_uuid,
-            )
+            raise FileTransferError(f"Failed to upload training script: {str(e)}")
+
+    async def _stop_monitoring(self) -> None:
+        """Stop monitoring the training job."""
+        if self.monitor:
+            await self.monitor.stop_monitoring()
+            self.logger.info("🛑 Stopped monitoring")
+        else:
+            self.logger.info("No monitor to stop")
 
     # ==================== Training Execution ====================
 
@@ -413,6 +437,11 @@ class TrainingWorkflow:
                 )
             )
 
+            self.job.status = TrainingJobStatus.RUNNING
+            self.job.started_at = ist_now()
+            await self.job.save()
+            self.logger.info(f"🚀 Training job {self.job_uuid} script execution started on GPU")
+
             # Wait for both tasks to complete
             await asyncio.gather(monitor_task, training_task)
 
@@ -420,32 +449,16 @@ class TrainingWorkflow:
 
         except Exception as e:
             # Stop monitoring if it's still running
-            if self.monitor:
-                await self.monitor.stop_monitoring()
-            raise TrainingExecutionError(
-                f"Training execution failed: {str(e)}", job_uuid=self.state.job_uuid
-            )
+            await self._cleanup_resources()
+            raise TrainingExecutionError(f"Training execution failed: {str(e)}")
 
     async def _download_outputs(self) -> bool:
         """Download training outputs from GPU server to S3."""
         self.logger.info(f"📊 Starting output download for job {self.state.job_uuid}")
 
         try:
-            job = await TrainingJob.get(uuid=self.state.job_uuid)
-            machine_config = job.machine_config or {}
-            self.logger.info(f"Machine config: {machine_config}")
-
-            if not (instance_ip := machine_config.get("instance_ip")):
-                self.logger.warning("No instance IP, skipping output download")
-                return False
-
             # Get output paths
-            request_data = job.training_request or {}
-            data = self._parse_request_data(request_data)
-            project_id = data.get("project", {}).get("id")
-            training_run_id = data.get("training_run_id")
-
-            if not project_id or not training_run_id:
+            if not self.job.project_id or not self.job.training_run_id:
                 self.logger.warning(
                     "Missing project_id or training_run_id, skipping output download"
                 )
@@ -456,28 +469,29 @@ class TrainingWorkflow:
                 self.logger.warning("No S3 bucket configured, skipping output download")
                 return False
 
-            s3_path = f"media/projects/{project_id}/{training_run_id}"
+            s3_path = f"media/projects/{self.job.project_id}/{self.job.training_run_id}"
             self.logger.info(
-                f"📎 Transfer params: {instance_ip}:output/ -> s3://{s3_bucket}/{s3_path}"
+                f"📎 Transfer params: {self.state.instance_ip}:output/ -> s3://{s3_bucket}/{s3_path}"
             )
 
             # Transfer to S3
             self.logger.info("🚀 Starting file transfer to S3...")
+
             await asyncio.to_thread(
                 self.file_transfer.transfer_files_to_s3,
-                instance_ip,
+                self.state.instance_ip,
                 WorkflowConstants.REMOTE_OUTPUT_PATH,
                 s3_bucket,
                 s3_path,
                 recursive=True,
             )
+
             self.logger.info(f"✅ Outputs transferred to S3: {s3_path}")
+
             return True
         except Exception as e:
             self.logger.error(f"Failed to download outputs: {str(e)}", exc_info=True)
-            raise FileTransferError(
-                f"Output download failed: {str(e)}", job_uuid=self.state.job_uuid
-            )
+            raise FileTransferError(f"Output download failed: {str(e)}")
 
     # ==================== Cleanup & Error Handling ====================
 
@@ -488,33 +502,34 @@ class TrainingWorkflow:
 
         # Mark job as failed
         try:
-            job = await TrainingJob.get(uuid=self.state.job_uuid)
-            job.status = TrainingJobStatus.FAILED
-            job.completed_at = datetime.now()
-            await job.save()
+            await self._cleanup_resources()
+            self.job.status = TrainingJobStatus.FAILED
+            self.job.completed_at = ist_now()
+            await self.job.save()
 
-            if self.monitor:
-                await self.monitor.stop_monitoring()
         except Exception as e:
             self.logger.error(f"Failed to mark job as failed: {str(e)}")
-
-        # Cleanup instance
-        if self.state.instance_id:
-            await self._cleanup_instance(self.state.instance_id)
 
     async def _cleanup_resources(self) -> None:
         """Cleanup all resources including SSH connections and GPU instances."""
         self.logger.info("🧹 Starting resource cleanup")
 
         # Stop monitoring
-        if self.monitor:
-            try:
-                self.logger.info("🛑 Stopping monitoring")
-                await self.monitor.stop_monitoring()
-            except Exception as e:
-                self.logger.error(f"Error stopping monitor: {e}")
+        await self._stop_monitoring()
+
+        # Download outputs
+        await self._download_outputs()
 
         # Cleanup SSH connection
+        await self.close_ssh_connection()
+
+        # Cleanup GPU instance
+        await self._terminate_instance()
+
+
+        self.logger.info("✅ Resource cleanup completed")
+
+    async def close_ssh_connection(self) -> None:
         if self.ssh_executor:
             try:
                 await asyncio.to_thread(self.ssh_executor.disconnect)
@@ -522,21 +537,29 @@ class TrainingWorkflow:
             except Exception as e:
                 self.logger.error(f"Error closing SSH connection: {e}")
 
-        # Cleanup GPU instance
-        if self.state and self.state.instance_id:
-            try:
-                if self.lambda_client.terminate_instance(self.state.instance_id):
-                    self.logger.info(f"✅ Instance {self.state.instance_id} terminated")
-                else:
-                    self.logger.warning(
-                        f"⚠️ Failed to terminate instance {self.state.instance_id}"
-                    )
-            except Exception as e:
-                self.logger.error(f"Error terminating instance: {e}")
+    async def _terminate_instance(self) -> None:
+        """Terminate the GPU instance if it exists."""
+        if not self.state or not self.state.instance_id:
+            return
 
-        self.logger.info("✅ Resource cleanup completed")
+        try:
+            if await asyncio.to_thread(
+                self.gpu_client.terminate_instance, self.state.instance_id
+            ):
+                self.logger.info(f"✅ Instance {self.state.instance_id} terminated")
+            else:
+                self.logger.warning(
+                    f"⚠️ Failed to terminate instance {self.state.instance_id}"
+                )
+        except Exception as e:
+            self.logger.error(f"Error terminating instance: {e}")
+            raise
 
     # ==================== Utilities ====================
+
+    def transfer_progress_callback(self, transferred, total):
+        percent = (transferred / total) * 100
+        self.logger.info(f"Transfer progress: {percent:.1f}%")
 
     def _parse_request_data(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """Parse nested request data structure."""

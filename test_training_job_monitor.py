@@ -120,7 +120,7 @@ async def create_test_job() -> str:
         project_id="spam_local_test",
         training_run_id="test_run_1",
         status=TrainingJobStatus.PENDING,
-        project_config={
+        project_yaml_config={
             "project_name": "spam local",
             "no_iterations": 1,
             "model_name": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
@@ -171,7 +171,6 @@ async def test_monitor_with_local_file(global_json_path: str):
             remote_log_path=global_json_path,  # Use local path directly
             poll_interval=1,  # Fast polling for testing
             logger=logger,
-            on_completion_callback=on_completion,
         )
 
         print(f"📊 Starting monitor for job: {job_uuid}")
@@ -190,7 +189,7 @@ async def test_monitor_with_local_file(global_json_path: str):
         print(f"⏱️  Time Taken: {final_job.time_taken} seconds")
         print(f"📅 Created At: {final_job.created_at}")
         print(f"✅ Completed At: {final_job.completed_at}")
-        print(f"🔧 Project Config: {final_job.project_config}")
+        print(f"🔧 Project Config: {final_job.project_yaml_config}")
 
         # Check iterations
         from models.training_iteration import TrainingIteration

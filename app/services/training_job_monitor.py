@@ -27,13 +27,13 @@ class TrainingJobMonitor:
     """
 
     def __init__(
-        self,
-        training_job_uuid: str,
-        ssh_executor: SshExecutor,
-        remote_log_path: str = "output/*/logs/global.json",
-        poll_interval: int = 5,
-        logger: logging.Logger = None,
-    ):
+            self,
+            training_job_uuid: str,
+            ssh_executor: SshExecutor,
+            remote_log_path: str = "output/*/logs/global.json",
+            poll_interval: int = 5,
+            logger: logging.Logger = None,
+        ):
         """
         Initialize the monitor.
 
@@ -55,6 +55,7 @@ class TrainingJobMonitor:
         self.processed_line_count = 0
 
         # Track current iteration and epoch for database updates
+        self.current_project: Optional[TrainingIteration] = None
         self.current_group_iteration: Optional[TrainingIteration] = None
         self.current_iteration: Optional[TrainingIteration] = None
         self.current_iteration_number: Optional[int] = None
@@ -148,17 +149,17 @@ class TrainingJobMonitor:
         """Start monitoring the global.json file."""
         self.logger.info(f"🔍 Starting monitoring for job {self.training_job_uuid}")
 
+        # Load the TrainingJob instance for foreign key relationships
         try:
-            # Update job status to RUNNING
-            async def update_job_status():
-                self.training_job = await TrainingJob.get(uuid=self.training_job_uuid)
-                self.training_job.status = TrainingJobStatus.RUNNING
-                await self.training_job.save()
-
-            await self._safe_db_operation(
-                "update_job_status_running", update_job_status
+            self.training_job = await TrainingJob.get(uuid=self.training_job_uuid)
+            self.logger.info(f"✅ Loaded training job: {self.training_job.project_id}")
+        except Exception as e:
+            self.logger.error(
+                f"❌ Failed to load training job {self.training_job_uuid}: {e}"
             )
+            return
 
+        try:
             while not self.should_stop:
                 try:
                     await self._poll_and_update()
@@ -173,9 +174,7 @@ class TrainingJobMonitor:
                     try:
                         await asyncio.sleep(self.poll_interval)
                     except asyncio.CancelledError:
-                        self.logger.info(
-                            f"Monitoring cancelled during error recovery for job {self.training_job_uuid}"
-                        )
+                        self.logger.info(f"Monitoring cancelled during error recovery for job {self.training_job_uuid}")
                         raise
 
         except asyncio.CancelledError:
@@ -187,6 +186,7 @@ class TrainingJobMonitor:
                 await self._mark_job_failed(str(e))
             except Exception as db_error:
                 self.logger.error(f"Failed to mark job as failed: {db_error}")
+            raise
 
     async def stop_monitoring(self):
         """Stop the monitoring loop."""
@@ -308,37 +308,39 @@ class TrainingJobMonitor:
 
     async def _handle_project_event(self, event: Dict[str, Any]):
         """Handle PROJECT phase events."""
-        # Critical null check - ensure training_job is loaded
-        if not self.training_job:
-            self.logger.error("Training job not loaded, cannot process PROJECT event")
-            return
-
         event_type = event.get("event")
         data = event.get("data", {})
 
         if event_type == "start":
             event_timestamp = self._get_timestamp(event)
-            self.training_job.created_at = event_timestamp
-            self.training_job.project_config = data.get("config", {})
-            await self.training_job.save()
+            self.current_project = await TrainingIteration.create(
+                training_job=self.training_job,
+                iteration_number=1,
+                step_type=StepType.PROJECT,
+                step_config=data.get("config", {}),
+                created_at=event_timestamp,
+            )
+            await self.current_project.save()
             self.logger.info(f"📋 Project started at: {event_timestamp}")
 
         elif event_type == "end":
-            self.training_job.completed_at = self._get_timestamp(event)
+            if not self.current_project:
+                self.logger.error("No current project to complete")
+                return
+
+            self.current_project.completed_at = self._get_timestamp(event)
             data = event.get("data", {})
             duration = data.get("duration", None)
             if not duration:
                 duration = self.get_duration(
-                    self.training_job.created_at, self.training_job.completed_at
+                    self.current_project.created_at, self.current_project.completed_at
                 )
-            self.training_job.time_taken = duration
-            # Mark job as completed
-            self.training_job.status = TrainingJobStatus.COMPLETED
-            await self.training_job.save()
+            self.current_project.time_taken = duration
+            await self.current_project.save()
             self.logger.info("✅ Project completed")
 
             # Stop monitoring - training is complete
-            self.should_stop = True
+            await self.stop_monitoring()
 
     async def _handle_group_iteration_event(self, event: Dict[str, Any]):
         """Handle GROUP_ITERATION phase events."""
@@ -359,6 +361,9 @@ class TrainingJobMonitor:
                 f"🔄 Group iteration started with {config.get('no_iterations')} iterations"
             )
         elif event_type == "end":
+            if not self.current_group_iteration:
+                self.logger.error("No current group iteration to complete")
+                return
 
             self.current_group_iteration.completed_at = self._get_timestamp(event)
             duration = event.get("data", {}).get("duration", None)
@@ -373,9 +378,6 @@ class TrainingJobMonitor:
 
     async def _handle_iteration_event(self, event: Dict[str, Any]):
         """Handle ITERATION phase events."""
-        if not self.training_job:
-            self.logger.error("Training job not loaded, cannot process ITERATION event")
-            return
 
         event_type = event.get("event")
         data = event.get("data", {})
@@ -423,12 +425,6 @@ class TrainingJobMonitor:
 
     async def _handle_trajectory_event(self, event: Dict[str, Any]):
         """Handle TRAJECTORY phase events."""
-        if not self.training_job:
-            self.logger.error(
-                "Training job not loaded, cannot process TRAJECTORY event"
-            )
-            return
-
         event_type = event.get("event")
         data = event.get("data", {})
 
@@ -442,7 +438,7 @@ class TrainingJobMonitor:
                 self.current_trajectory = await TrainingIteration.create(
                     training_job=self.training_job,
                     iteration_number=self.current_iteration_number,
-                    step_type=StepType.TRAJECTORY_GENERATION,
+                    step_type=StepType.TRAJECTORY,
                     step_config=config,
                     created_at=event_timestamp,
                 )
@@ -474,10 +470,6 @@ class TrainingJobMonitor:
 
     async def _handle_training_event(self, event: Dict[str, Any]):
         """Handle TRAINING phase events for overall training iteration (start/end)."""
-        if not self.training_job:
-            self.logger.error("Training job not loaded, cannot process TRAINING event")
-            return
-
         event_type = event.get("event")
         data = event.get("data", {})
 
@@ -523,12 +515,6 @@ class TrainingJobMonitor:
 
     async def _handle_epoch_train_event(self, event: Dict[str, Any]):
         """Handle TRAINING phase epoch_complete events for individual epochs."""
-        if not self.training_job:
-            self.logger.error(
-                "Training job not loaded, cannot process EPOCH_TRAIN event"
-            )
-            return
-
         event_type = event.get("event")
 
         if event_type == "start":
@@ -577,12 +563,6 @@ class TrainingJobMonitor:
 
     async def _handle_eval_training_event(self, event: Dict[str, Any]):
         """Handle EVAL_TRAINING phase events for overall evaluation iteration."""
-        if not self.training_job:
-            self.logger.error(
-                "Training job not loaded, cannot process EVAL_TRAINING event"
-            )
-            return
-
         event_type = event.get("event")
         data = event.get("data", {})
 
@@ -643,6 +623,11 @@ class TrainingJobMonitor:
         data = event.get("data", {})
 
         if event_type == "start":
+            # Ensure we have a current evaluation to link to
+            if not self.current_evaluation:
+                self.logger.error("No current evaluation for model evaluation")
+                return
+
             # Parse timestamp from event
             event_timestamp = self._get_timestamp(event)
 

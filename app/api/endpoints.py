@@ -69,42 +69,14 @@ class JobStatusResponse(BaseModel):
 
     job_uuid: str
     status: str
-    project_id: str
-    training_run_id: str
-    created_at: Optional[str]
-    updated_at: Optional[str]
-    completed_at: Optional[str]
-    time_taken: Optional[int]
-    machine_config: Optional[Dict[str, Any]]
-    training_config: Optional[Dict[str, Any]]
 
+class CancelTrainingResponse(BaseModel):
+    """Response model for cancel training job"""
 
-class IterationResponse(BaseModel):
-    """Response model for training iteration"""
-
-    id: str
-    iteration_number: int
-    step_type: str
-    created_at: Optional[str]
-    completed_at: Optional[str]
-    step_time: Optional[float]
-    step_config: Optional[Dict[str, Any]]
-
-
-class JobDetailResponse(BaseModel):
-    """Detailed response model for job with iterations"""
-
+    success: bool
+    message: str
     job_uuid: str
     status: str
-    project_id: str
-    training_run_id: str
-    created_at: Optional[str]
-    updated_at: Optional[str]
-    completed_at: Optional[str]
-    time_taken: Optional[int]
-    machine_config: Optional[Dict[str, Any]]
-    training_config: Optional[Dict[str, Any]]
-    iterations: List[IterationResponse]
 
 
 async def _run_training_job_background(
@@ -122,20 +94,17 @@ async def _run_training_job_background(
     Raises:
         Exception: If training fails
     """
-    orchestrator = TrainingWorkflow(logger=logger)
-
-    # Set the pre-created job UUID in the orchestrator
-    orchestrator.job = await TrainingJob.get(uuid=job_uuid)
+    workflow = await TrainingWorkflow.for_existing_job(job_uuid=job_uuid, logger=logger)
 
     try:
         # Run complete training workflow (skip job initialization since it's already done)
-        completed_job_uuid = await orchestrator.run_complete_training(request_data)
+        completed_job_uuid = await workflow.run_complete_training(request_data)
         logger.info(f"✅ Training job {completed_job_uuid} completed successfully")
         return completed_job_uuid
 
     except Exception as e:
         logger.error(f"Training job {job_uuid} failed: {str(e)}")
-        # The orchestrator handles job status updates in _handle_failure
+        # The workflow handles job status updates in _handle_failure
         raise
 
 
@@ -185,8 +154,8 @@ async def start_training_job(
     """
     try:
         # Initialize job record first
-        orchestrator = TrainingWorkflow(logger=logger)
-        job_uuid = await orchestrator._initialize_job(request.model_dump())
+        workflow = TrainingWorkflow.for_new_job(logger=logger)
+        job_uuid = await workflow._initialize_job(request.model_dump())
 
         # Start training in background using FastAPI BackgroundTasks
         background_tasks.add_task(
@@ -217,10 +186,7 @@ async def get_job_status(job_uuid: str):
     try:
         job = await TrainingJob.get(uuid=job_uuid)
 
-        return JobStatusResponse(
-            job_uuid=str(job.uuid),
-            status=job.status.value
-        )
+        return JobStatusResponse(job_uuid=str(job.uuid), status=job.status.value)
 
     except Exception as e:
         logger.error(f"Failed to get job status: {str(e)}")
@@ -238,7 +204,9 @@ async def cancel_training_job(job_uuid: str):
     """
     try:
         # Create an instance of TrainingWorkflow
-        workflow = TrainingWorkflow(logger=logger)
+        workflow = await TrainingWorkflow.for_existing_job(
+            job_uuid=job_uuid, logger=logger
+        )
 
         # Attempt to cancel the training job
         cancellation_successful = await workflow.cancel_training(job_uuid)
@@ -251,16 +219,15 @@ async def cancel_training_job(job_uuid: str):
 
         logger.info(f"Training job {job_uuid} marked as cancelled")
 
-        return {
-            "success": True,
-            "message": f"Training job {job_uuid} cancelled successfully",
-            "job_uuid": job_uuid,
-            "status": "cancelled",
-        }
+        return CancelTrainingResponse(
+            success=True,
+            message=f"Training job {job_uuid} cancelled successfully",
+            job_uuid=job_uuid,
+            status="cancelled",
+        )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to cancel job: {str(e)}")
         raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
-

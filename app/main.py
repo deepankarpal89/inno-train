@@ -7,7 +7,7 @@ import os
 
 from app.config import settings
 from app.api import api_router
-from app.db import init_db, close_db
+from models.database import init_db, close_db
 
 # Configure logging
 logging.basicConfig(

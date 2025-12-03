@@ -26,6 +26,9 @@ class TrainingJob(Model):
     created_at = fields.CharField(
         max_length=32, null=True
     )  # IST timestamp as ISO string
+    started_at = fields.CharField(
+        max_length=32, null=True
+    )  # IST timestamp as ISO string
     completed_at = fields.CharField(
         max_length=32, null=True
     )  # IST timestamp as ISO string
@@ -34,7 +37,6 @@ class TrainingJob(Model):
     project_id = fields.CharField(max_length=255)
     training_run_id = fields.CharField(max_length=255, index=True)
     project_yaml_config = fields.JSONField(null=True)
-    project_config = fields.JSONField(null=True)  # Project configuration
     training_request = fields.JSONField(null=True)  # Training request
     machine_config = fields.JSONField(null=True)  # Machine/GPU configuration
     status = fields.CharEnumField(TrainingJobStatus, default=TrainingJobStatus.PENDING)
