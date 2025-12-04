@@ -212,10 +212,9 @@ class TrainingWorkflow:
                 await self.job.save(update_fields=["completed_at"])
             except Exception as cleanup_error:
                 self.logger.error(f"Failed to cleanup resources: {str(cleanup_error)}")
-                if 'e' in locals():
+                if "e" in locals():
                     raise e from cleanup_error
                 raise
-                
 
     async def cancel_training(self) -> bool:
         """Cancel a running training job."""
@@ -226,7 +225,7 @@ class TrainingWorkflow:
             ]:
                 return False
 
-            self._cleanup_resources()
+            await self._cleanup_resources()
 
             # Update status
             self.job.status = TrainingJobStatus.CANCELLED
@@ -263,7 +262,7 @@ class TrainingWorkflow:
             training_run_id=self.data.get("training_run_id"),
             training_request=self.request_data,
             status=TrainingJobStatus.PENDING,
-            created_at = ist_now(),
+            created_at=ist_now(),
         )
         self.job_uuid = str(self.job.uuid)
 
@@ -331,14 +330,15 @@ class TrainingWorkflow:
             raise InfrastructureError(f"GPU provisioning failed: {str(e)}")
 
     async def _establish_ssh_connection(self) -> None:
-        """Setup SSH connection with retry logic."""
+        """Setup SSH connection with retry logic using async method."""
         self.ssh_executor = SshExecutor(
             ip=self.state.instance_ip, username=WorkflowConstants.SSH_USERNAME
         )
 
         for attempt in range(WorkflowConstants.SSH_RETRY_ATTEMPTS):
             try:
-                await asyncio.to_thread(self.ssh_executor.connect)
+                # Use async connection method
+                await self.ssh_executor.connect_async()
                 self.logger.info("✅ SSH connection established")
                 return
             except Exception as e:
@@ -440,7 +440,9 @@ class TrainingWorkflow:
             self.job.status = TrainingJobStatus.RUNNING
             self.job.started_at = ist_now()
             await self.job.save()
-            self.logger.info(f"🚀 Training job {self.job_uuid} script execution started on GPU")
+            self.logger.info(
+                f"🚀 Training job {self.job_uuid} script execution started on GPU"
+            )
 
             # Wait for both tasks to complete
             await asyncio.gather(monitor_task, training_task)
@@ -525,7 +527,6 @@ class TrainingWorkflow:
 
         # Cleanup GPU instance
         await self._terminate_instance()
-
 
         self.logger.info("✅ Resource cleanup completed")
 

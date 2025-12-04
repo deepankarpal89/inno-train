@@ -10,47 +10,14 @@ import time
 import requests
 from pprint import pprint
 from pathlib import Path
-
+from dotenv import load_dotenv
 # Configuration
-BASE_URL = "http://localhost:8001/api"
+load_dotenv()
+BASE_URL = os.getenv("BASE_URL")
 START_TRAINING_ENDPOINT = f"{BASE_URL}/v1/training/start"
 JOB_STATUS_ENDPOINT = f"{BASE_URL}/v1/training/status"  # Adjust if needed
-TRAIN_REQUEST_PATH = "app/api/train_request.json"
+TRAIN_REQUEST_PATH = os.getenv("TRAIN_REQUEST_PATH")
 
-request_data = {
-            "training_run_id": "7b1be4c4-084d-46d7-948d-12b04b26b049",
-            "project": {
-                "id": "7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd",
-                "name": "spam local",
-                "description": "testing spam on local",
-                "task_type": "text_classification"
-            },
-            "prompt": {
-                "id": "c2e62aa3-cb7f-43e1-ba57-5817909ef04a",
-                "name": "short prompt",
-                "content": "You are a helpful assistant that classifies text messages as spam or not spam. For each message, respond with 'spam' or 'not spam'"
-            },
-            "train_dataset": {
-                "id": "996c0774-5676-41d9-a94b-b5b78d694828",
-                "name": "spam train",
-                "file_url": "http://localhost:9000/innotone-media/media/projects/7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd/train/spam_train_test.csv",
-                "file_name": "projects/7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd/train/spam_train_test.csv",
-                "file_format": "csv",
-                "text_col": "text",
-                "label_col": "label",
-                "think_col": ""
-            },
-            "eval_dataset": {
-                "id": "a11fe5b8-639a-4486-b215-f3e1b4e29216",
-                "name": "spam test",
-                "file_url": "http://localhost:9000/innotone-media/media/projects/7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd/eval/spam_cv_test.csv",
-                "file_name": "projects/7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd/eval/spam_cv_test.csv",
-                "file_format": "csv",
-                "text_col": "text",
-                "label_col": "label",
-                "think_col": ""
-            },
-        }
 
 with open(TRAIN_REQUEST_PATH, 'r') as f:
     request_data = json.load(f)

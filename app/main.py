@@ -80,4 +80,4 @@ if __name__ == "__main__":
     load_dotenv()
     print("Port: ", os.getenv("PORT"))
     port = int(os.getenv("PORT"))
-    uvicorn.run("app.main:app", host=settings.host, port=port, reload=True)
+    uvicorn.run("app.main:app", host=settings.host, port=port, reload=True,workers=4)

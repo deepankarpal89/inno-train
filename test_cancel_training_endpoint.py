@@ -4,12 +4,14 @@ Script to cancel a training job via the InnoTrain API.
 
 import argparse
 import sys
-from typing import Dict, Any, Optional
-
+from typing import Dict, Any
+from dotenv import load_dotenv
 import requests
+import os
 
 # Configuration
-BASE_URL = "http://localhost:8001/api"
+load_dotenv()
+BASE_URL = os.getenv("BASE_URL")
 
 
 def cancel_training_job(job_uuid: str) -> Dict[str, Any]:
@@ -34,6 +36,7 @@ def cancel_training_job(job_uuid: str) -> Dict[str, Any]:
             timeout=120
         )
         response.raise_for_status()
+        print(response.json())
         return response.json()
         
     except requests.exceptions.HTTPError as e:

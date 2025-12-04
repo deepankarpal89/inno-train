@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
+import asyncio
 
 from app.services.training_workflow import TrainingWorkflow
 from models.training_job import TrainingJob, TrainingJobStatus
@@ -69,6 +70,8 @@ class JobStatusResponse(BaseModel):
 
     job_uuid: str
     status: str
+    success: bool
+
 
 class CancelTrainingResponse(BaseModel):
     """Response model for cancel training job"""
@@ -81,7 +84,7 @@ class CancelTrainingResponse(BaseModel):
 
 async def _run_training_job_background(
     request_data: Dict[str, Any], job_uuid: str
-    ) -> str:
+) -> str:
     """Run complete training job in background.
 
     Args:
@@ -108,6 +111,20 @@ async def _run_training_job_background(
         raise
 
 
+def _run_training_job_background_sync(
+    request_data: Dict[str, Any], job_uuid: str
+) -> str:
+    """Run training job in a new event loop in a separate thread."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(
+            _run_training_job_background(request_data, job_uuid)
+        )
+    finally:
+        loop.close()
+
+
 @router.get("/hello")
 async def hello_world():
     """
@@ -120,7 +137,7 @@ async def hello_world():
 @router.post("/v1/training/start", response_model=TrainingResponse)
 async def start_training_job(
     request: TrainingRequest, background_tasks: BackgroundTasks
-    ):
+):
     """
     Start a new GPU training job.
 
@@ -150,7 +167,6 @@ async def start_training_job(
             }
         }
     }
-    ```
     """
     try:
         # Initialize job record first
@@ -159,7 +175,7 @@ async def start_training_job(
 
         # Start training in background using FastAPI BackgroundTasks
         background_tasks.add_task(
-            _run_training_job_background, request.model_dump(), job_uuid
+            _run_training_job_background_sync, request.model_dump(), job_uuid
         )
 
         logger.info(f"Training job {job_uuid} queued for background execution")
@@ -186,7 +202,9 @@ async def get_job_status(job_uuid: str):
     try:
         job = await TrainingJob.get(uuid=job_uuid)
 
-        return JobStatusResponse(job_uuid=str(job.uuid), status=job.status.value)
+        return JobStatusResponse(
+            job_uuid=str(job.uuid), status=job.status.value, success=True
+        )
 
     except Exception as e:
         logger.error(f"Failed to get job status: {str(e)}")
@@ -199,26 +217,45 @@ async def cancel_training_job(job_uuid: str):
     Cancel a running training job.
 
     This will:
-    1. Attempt to cancel the job using the TrainingWorkflow
-    2. Mark the job as cancelled in the database if successful
+    1. Check if the job exists and its current status
+    2. If already in terminal state, return appropriate message
+    3. Otherwise, attempt to cancel the job
     """
     try:
+        # First get the job to check its status
+        try:
+            job = await TrainingJob.get(uuid=job_uuid)
+        except Exception:
+            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+
+        # Check if job is already in a terminal state
+        if job.status in [
+            TrainingJobStatus.COMPLETED,
+            TrainingJobStatus.FAILED,
+            TrainingJobStatus.CANCELLED,
+        ]:
+            return CancelTrainingResponse(
+                success=True,
+                message=f"Job is already in terminal state: {job.status.value}",
+                job_uuid=job_uuid,
+                status=job.status.value,
+            )
+
         # Create an instance of TrainingWorkflow
         workflow = await TrainingWorkflow.for_existing_job(
             job_uuid=job_uuid, logger=logger
         )
 
         # Attempt to cancel the training job
-        cancellation_successful = await workflow.cancel_training(job_uuid)
+        cancellation_successful = await workflow.cancel_training()
 
         if not cancellation_successful:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot cancel job with status: {job.status.value}",
+                detail=f"Failed to cancel job with status: {job.status.value}",
             )
 
         logger.info(f"Training job {job_uuid} marked as cancelled")
-
         return CancelTrainingResponse(
             success=True,
             message=f"Training job {job_uuid} cancelled successfully",
@@ -229,5 +266,8 @@ async def cancel_training_job(job_uuid: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to cancel job: {str(e)}")
-        raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+        logger.error(f"Error cancelling job {job_uuid}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while cancelling the job: {str(e)}",
+        )

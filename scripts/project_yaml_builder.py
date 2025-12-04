@@ -85,11 +85,11 @@ class ProjectYamlBuilder:
 
     def _add_model(self):
         self.yaml_data["model_name"] = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-        self.yaml_data["max_new_tokens"] = 2
+        self.yaml_data["max_new_tokens"] = 250
 
     def _add_trajectory(self):
         self.yaml_data["trajectory_name"] = "run_1"
-        self.yaml_data["trajectory_count"] = 2
+        self.yaml_data["trajectory_count"] = 10
 
     def _add_train_params(self):
         self.yaml_data["start_iteration"] = 1
@@ -97,7 +97,7 @@ class ProjectYamlBuilder:
         self.yaml_data["save_every_epoch"] = 1
         self.yaml_data["accumulation_steps"] = 1
         self.yaml_data["no_epochs"] = 1
-        self.yaml_data["no_iterations"] = 1
+        self.yaml_data["no_iterations"] = 5
         self.yaml_data["loss"] = "gspo"
         self.yaml_data["model_epoch"] = 1
 
@@ -225,7 +225,8 @@ def main():
 
     pyb = ProjectYamlBuilder()
     pyb.create_yaml(data, "config.yaml")
-    pyb.save_to_s3()
+    #pyb.save_to_s3()
+    print(pyb.get_yaml_dict())
 
 
 if __name__ == "__main__":

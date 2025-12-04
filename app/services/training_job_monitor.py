@@ -17,7 +17,6 @@ from models.training_job import TrainingJob, TrainingJobStatus
 from models.training_iteration import TrainingIteration, StepType
 from models.epoch_train import EpochTrain
 from models.eval import Eval
-from test import event_timestamp
 
 
 class TrainingJobMonitor:
