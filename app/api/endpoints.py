@@ -1,17 +1,19 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
 import asyncio
 
-from app.services.training_workflow import TrainingWorkflow
+from app.services.training_workflow import TrainingWorkflow, JobNotFoundError
 from models.training_job import TrainingJob, TrainingJobStatus
 from models.training_iteration import TrainingIteration
 from models.epoch_train import EpochTrain
 from models.eval import Eval
 
-router = APIRouter()
+from concurrent.futures import ThreadPoolExecutor
 
+router = APIRouter()
+TRAINING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 def setup_logger(name: str) -> logging.Logger:
     """
@@ -84,7 +86,7 @@ class CancelTrainingResponse(BaseModel):
 
 async def _run_training_job_background(
     request_data: Dict[str, Any], job_uuid: str
-) -> str:
+    ) -> str:
     """Run complete training job in background.
 
     Args:
@@ -113,7 +115,7 @@ async def _run_training_job_background(
 
 def _run_training_job_background_sync(
     request_data: Dict[str, Any], job_uuid: str
-) -> str:
+    ) -> str:
     """Run training job in a new event loop in a separate thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -137,47 +139,23 @@ async def hello_world():
 @router.post("/v1/training/start", response_model=TrainingResponse)
 async def start_training_job(
     request: TrainingRequest, background_tasks: BackgroundTasks
-):
-    """
-    Start a new GPU training job.
+    ):
 
-    This endpoint:
-    1. Creates a database record for the training job
-    2. Starts the complete training workflow in background
-    3. Returns immediately with job UUID
-    4. Training runs asynchronously until completion
-
-    Use the job UUID to check status and get results.
-
-    Example request body (matches train_request.json format):
-    ```json
-    {
-        "data": {
-            "request_data": {
-                "training_run_id": "7b1be4c4-084d-46d7-948d-12b04b26b049",
-                "project": {
-                    "id": "7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd",
-                    "name": "spam local",
-                    "description": "testing spam on local",
-                    "task_type": "text_classification"
-                },
-                "prompt": {...},
-                "train_dataset": {...},
-                "eval_dataset": {...}
-            }
-        }
-    }
-    """
     try:
         # Initialize job record first
         workflow = TrainingWorkflow.for_new_job(logger=logger)
         job_uuid = await workflow._initialize_job(request.model_dump())
 
-        # Start training in background using FastAPI BackgroundTasks
-        background_tasks.add_task(
-            _run_training_job_background_sync, request.model_dump(), job_uuid
+        future = TRAINING_EXECUTOR.submit(
+            _run_training_job_background_sync,
+            request.model_dump(),
+            job_uuid
         )
-
+    
+        # Optional: Add callback to handle completion
+        future.add_done_callback(
+            lambda f: logger.info(f"Job {job_uuid} completed with status {f.result()}")
+        )
         logger.info(f"Training job {job_uuid} queued for background execution")
 
         return TrainingResponse(
@@ -194,11 +172,6 @@ async def start_training_job(
 
 @router.get("/v1/training/jobs/{job_uuid}", response_model=JobStatusResponse)
 async def get_job_status(job_uuid: str):
-    """
-    Get the status of a training job.
-
-    Returns current status, timestamps, and configuration.
-    """
     try:
         job = await TrainingJob.get(uuid=job_uuid)
 
@@ -211,58 +184,25 @@ async def get_job_status(job_uuid: str):
         raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
 
 
-@router.post("/v1/training/jobs/{job_uuid}/cancel")
-async def cancel_training_job(job_uuid: str):
-    """
-    Cancel a running training job.
-
-    This will:
-    1. Check if the job exists and its current status
-    2. If already in terminal state, return appropriate message
-    3. Otherwise, attempt to cancel the job
-    """
+@router.post("/v1/training/jobs/{job_uuid}/cancel", response_model=CancelTrainingResponse)
+async def cancel_training_job(job_uuid: str) -> CancelTrainingResponse:
+    
     try:
-        # First get the job to check its status
-        try:
-            job = await TrainingJob.get(uuid=job_uuid)
-        except Exception:
-            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
-
-        # Check if job is already in a terminal state
-        if job.status in [
-            TrainingJobStatus.COMPLETED,
-            TrainingJobStatus.FAILED,
-            TrainingJobStatus.CANCELLED,
-        ]:
-            return CancelTrainingResponse(
-                success=True,
-                message=f"Job is already in terminal state: {job.status.value}",
-                job_uuid=job_uuid,
-                status=job.status.value,
-            )
-
-        # Create an instance of TrainingWorkflow
+        # Create workflow and cancel the job
         workflow = await TrainingWorkflow.for_existing_job(
             job_uuid=job_uuid, logger=logger
         )
+        cancel_result = await workflow.cancel_training()
 
-        # Attempt to cancel the training job
-        cancellation_successful = await workflow.cancel_training()
-
-        if not cancellation_successful:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to cancel job with status: {job.status.value}",
-            )
-
-        logger.info(f"Training job {job_uuid} marked as cancelled")
         return CancelTrainingResponse(
-            success=True,
-            message=f"Training job {job_uuid} cancelled successfully",
+            success=cancel_result["success"],
+            message=cancel_result["message"],
             job_uuid=job_uuid,
-            status="cancelled",
+            status=cancel_result["status"],
         )
 
+    except JobNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

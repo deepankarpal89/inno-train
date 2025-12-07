@@ -44,6 +44,12 @@ class TrainingExecutionError(WorkflowError):
     pass
 
 
+class JobNotFoundError(WorkflowError):
+    """Raised when a job cannot be found."""
+
+    pass
+
+
 class WorkflowConstants:
     """Constants for training workflow configuration."""
 
@@ -124,6 +130,8 @@ class TrainingWorkflow:
     ):
         """Create workflow from an existing job in the database."""
         job = await TrainingJob.get(uuid=job_uuid)
+        if not job:
+            raise JobNotFoundError(f"Job not found: {job_uuid}")
         return cls(job_uuid=job_uuid, logger=logger, job=job)
 
     @classmethod
@@ -216,15 +224,29 @@ class TrainingWorkflow:
                     raise e from cleanup_error
                 raise
 
-    async def cancel_training(self) -> bool:
-        """Cancel a running training job."""
+    async def cancel_training(self) -> dict:
+        """Cancel a running training job.
+
+        Returns:
+            dict: A dictionary with keys:
+                - success: bool
+                - message: str
+                - status: str
+        """
         try:
+            # Check if job is already in a terminal state
             if self.job.status in [
                 TrainingJobStatus.COMPLETED,
                 TrainingJobStatus.FAILED,
+                TrainingJobStatus.CANCELLED,
             ]:
-                return False
+                return {
+                    "success": True,
+                    "message": f"Job is already in terminal state: {self.job.status.value}",
+                    "status": self.job.status.value,
+                }
 
+            # Otherwise, attempt to cancel the job
             await self._cleanup_resources()
 
             # Update status
@@ -233,11 +255,19 @@ class TrainingWorkflow:
             await self.job.save()
 
             self.logger.info(f"🛑 Cancelled job {self.job_uuid}")
-            return True
+            return {
+                "success": True,
+                "message": f"Training job {self.job_uuid} cancelled successfully",
+                "status": self.job.status.value,
+            }
 
         except Exception as e:
             self.logger.error(f"Failed to cancel job: {str(e)}")
-            return False
+            return {
+                "success": False,
+                "message": f"An error occurred while cancelling the job: {str(e)}",
+                "status": self.job.status.value if self.job else "unknown",
+            }
 
     # ==================== Job Initialization ====================
 
@@ -363,14 +393,19 @@ class TrainingWorkflow:
                 "S3 bucket not configured", job_uuid=self.state.job_uuid
             )
 
-        # Transfer datasets and config using constants
-        for s3_key, path_key, description in WorkflowConstants.TRANSFER_CONFIGS:
-            await self._transfer_file(
+        # Create transfer tasks for parallel execution
+        transfer_tasks = [
+            self._transfer_file(
                 s3_bucket,
                 self.state.yaml_builder.yaml_data[s3_key],
                 self.state.yaml_builder.yaml_data[path_key],
                 description,
             )
+            for s3_key, path_key, description in WorkflowConstants.TRANSFER_CONFIGS
+        ]
+    
+        # Execute transfers in parallel
+        await asyncio.gather(*transfer_tasks)
 
         # Upload training script
         await self._upload_training_script()

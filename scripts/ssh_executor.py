@@ -21,12 +21,19 @@ class CommandResult:
 
 
 class SshExecutor:
-    def __init__(self, ip, username="ubuntu"):
+    def __init__(self, ip, username="ubuntu",reuse_conection=True):
         self.ip = ip
         self.username = username
         self.timeout = 120
         self.client = None
+        self.reuse_conection = reuse_conection
+        self.sftp = None
         load_dotenv()
+
+    def get_sftp(self):
+        if not self.sftp or not self.sftp.sock or self.sftp.sock.closed:
+            self.sftp = self.client.open_sftp()
+        return self.sftp
 
     def connect(self):
 
@@ -118,7 +125,7 @@ class SshExecutor:
         if not remote_path:
             remote_path = os.path.basename(local_path)
         try:
-            sftp = self.client.open_sftp()
+            sftp = self.get_sftp()
             # Extract directory from remote_path
             remote_dir = os.path.dirname(remote_path)
             if remote_dir:  # If there's a directory component
@@ -159,7 +166,7 @@ class SshExecutor:
         if not local_path:
             local_path = os.path.basename(remote_path)
         try:
-            sftp = self.client.open_sftp()
+            sftp = self.get_sftp()
             sftp.get(remote_path, local_path)
             sftp.close()
             return True

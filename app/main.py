@@ -8,6 +8,7 @@ import os
 from app.config import settings
 from app.api import api_router
 from models.database import init_db, close_db
+from app.api.endpoints import TRAINING_EXECUTOR
 
 # Configure logging
 logging.basicConfig(
@@ -27,9 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     # Shutdown
     logger.info("🛑 Shutting down InnoTrain API server")
-
-    
-
+    TRAINING_EXECUTOR.shutdown(wait=True)
+    logger.info('Clsoing ThreadPoolExecutor')
     logger.info("📊 Closing database connections...")
     await close_db()
     logger.info("✅ Database connections closed")
@@ -69,7 +69,6 @@ def create_application() -> FastAPI:
     app.include_router(api_router)
 
     return app
-
 
 # Create the FastAPI application
 app = create_application()

@@ -7,10 +7,12 @@ import json
 import logging
 import tempfile
 import os
+import time
+
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
-
+from tortoise.transactions import in_transaction
 from scripts.utils import ist_now, parse_timestamp
 from scripts.ssh_executor import SshExecutor
 from models.training_job import TrainingJob, TrainingJobStatus
@@ -18,6 +20,39 @@ from models.training_iteration import TrainingIteration, StepType
 from models.epoch_train import EpochTrain
 from models.eval import Eval
 
+class UpdateBatcher:
+    """Batches database updates to reduce write operations."""
+    def __init__(self, batch_size=5, max_delay=2.0):
+        self.batch_size = batch_size
+        self.max_delay = max_delay
+        self.batch = []
+        self.last_flush = time.time()
+        
+    async def add_update(self, obj):
+        """Add an object to the batch queue."""
+        self.batch.append(obj)
+        if len(self.batch) >= self.batch_size or (time.time() - self.last_flush) > self.max_delay:
+            await self.flush()
+    
+    async def flush(self):
+        """Flush all pending updates to the database."""
+        if not self.batch:
+            return
+            
+        # Group by model type for bulk updates
+        by_type = {}
+        for obj in self.batch:
+            model_type = type(obj)
+            if model_type not in by_type:
+                by_type[model_type] = []
+            by_type[model_type].append(obj)
+        
+        # Perform bulk updates
+        for model_type, objects in by_type.items():
+            await model_type.bulk_update(objects)
+        
+        self.batch = []
+        self.last_flush = time.time()
 
 class TrainingJobMonitor:
     """
@@ -49,6 +84,7 @@ class TrainingJobMonitor:
         self.remote_log_path = remote_log_path
         self.poll_interval = poll_interval
         self.logger = logger or self._setup_logger()
+        self.update_batcher = UpdateBatcher()
 
         # Track processed lines to avoid duplicates
         self.processed_line_count = 0
@@ -282,29 +318,32 @@ class TrainingJobMonitor:
 
             self.logger.debug(f"Processing: {phase}")
 
-            # Route to appropriate handler
-            if phase == "PROJECT":
-                await self._handle_project_event(event)
-            elif phase == "GROUP_ITERATION":
-                await self._handle_group_iteration_event(event)
-            elif phase == "ITERATION":
-                await self._handle_iteration_event(event)
-            elif phase == "TRAJECTORY":
-                await self._handle_trajectory_event(event)
-            elif phase == "TRAINING":
-                await self._handle_training_event(event)
-            elif phase == "EPOCH_TRAIN":
-                await self._handle_epoch_train_event(event)
-            elif phase == "EVAL_TRAINING":
-                await self._handle_eval_training_event(event)
-            elif phase == "EVAL_MODEL":
-                await self._handle_eval_model_event(event)
+            # Route to appropriate handler within a transaction
+            async with in_transaction():
+                if phase == "PROJECT":
+                    await self._handle_project_event(event)
+                elif phase == "GROUP_ITERATION":
+                    await self._handle_group_iteration_event(event)
+                elif phase == "ITERATION":
+                    await self._handle_iteration_event(event)
+                elif phase == "TRAJECTORY":
+                    await self._handle_trajectory_event(event)
+                elif phase == "TRAINING":
+                    await self._handle_training_event(event)
+                elif phase == "EPOCH_TRAIN":
+                    await self._handle_epoch_train_event(event)
+                elif phase == "EVAL_TRAINING":
+                    await self._handle_eval_training_event(event)
+                elif phase == "EVAL_MODEL":
+                    await self._handle_eval_model_event(event)
+                
+                # Flush all batched updates at the end of transaction
+                await self.update_batcher.flush()
 
         except json.JSONDecodeError as e:
             self.logger.warning(f"Failed to parse log line: {line[:100]}... Error: {e}")
         except Exception as e:
             self.logger.error(f"Error processing log line: {str(e)}.. Line: {line}")
-
     async def _handle_project_event(self, event: Dict[str, Any]):
         """Handle PROJECT phase events."""
         event_type = event.get("event")
@@ -319,7 +358,7 @@ class TrainingJobMonitor:
                 step_config=data.get("config", {}),
                 created_at=event_timestamp,
             )
-            await self.current_project.save()
+            await self.update_batcher.add_update(self.current_project.save())
             self.logger.info(f"📋 Project started at: {event_timestamp}")
 
         elif event_type == "end":
@@ -335,7 +374,7 @@ class TrainingJobMonitor:
                     self.current_project.created_at, self.current_project.completed_at
                 )
             self.current_project.time_taken = duration
-            await self.current_project.save()
+            await self.update_batcher.add_update(self.current_project.save())
             self.logger.info("✅ Project completed")
 
             # Stop monitoring - training is complete
@@ -355,7 +394,7 @@ class TrainingJobMonitor:
                 step_config=config,
                 created_at=event_timestamp,
             )
-            await self.current_group_iteration.save()
+            await self.update_batcher.add_update(self.current_group_iteration.save())
             self.logger.info(
                 f"🔄 Group iteration started with {config.get('no_iterations')} iterations"
             )
@@ -372,7 +411,7 @@ class TrainingJobMonitor:
                     self.current_group_iteration.completed_at,
                 )
             self.current_group_iteration.time_taken = duration
-            await self.current_group_iteration.save()
+            await self.update_batcher.add_update(self.current_group_iteration.save())
             self.logger.info("✅ Group iteration completed")
 
     async def _handle_iteration_event(self, event: Dict[str, Any]):
@@ -416,7 +455,7 @@ class TrainingJobMonitor:
                     self.current_iteration.completed_at,
                 )
 
-            await self.current_iteration.save()
+            await self.update_batcher.add_update(self.current_iteration.save())
 
             iteration_number = self.current_iteration_number  # Store before clearing
             self.current_iteration = None
@@ -462,7 +501,7 @@ class TrainingJobMonitor:
                     self.current_trajectory.completed_at,
                 )
             self.current_trajectory.time_taken = duration
-            await self.current_trajectory.save()
+            await self.update_batcher.add_update(self.current_trajectory.save())
 
             self.current_trajectory = None
             self.logger.info(f"✅ Trajectory generation completed in {duration} min")
@@ -506,7 +545,7 @@ class TrainingJobMonitor:
                     self.current_training.created_at, self.current_training.completed_at
                 )
             self.current_training.time_taken = duration
-            await self.current_training.save()
+            await self.update_batcher.add_update(self.current_training.save())
 
             self.current_training = None
 
@@ -554,7 +593,8 @@ class TrainingJobMonitor:
             self.current_epoch_train.metrics = data.get("metrics", {})
             self.current_epoch_train.model_path = data.get("model_path", None)
             self.current_epoch_train.optimizer_path = data.get("optimizer_path", None)
-            await self.current_epoch_train.save()
+            
+            await self.update_batcher.add_update(self.current_epoch_train.save())
 
             self.current_epoch_train = None
 
@@ -599,7 +639,7 @@ class TrainingJobMonitor:
                     self.current_evaluation.completed_at,
                 )
             self.current_evaluation.time_taken = float(duration)
-            await self.current_evaluation.save()
+            await self.update_batcher.add_update(self.current_evaluation.save())
 
             self.current_evaluation = None
 
@@ -612,7 +652,7 @@ class TrainingJobMonitor:
                 return
 
             self.current_evaluation.metrics = data.get("metrics", {})
-            await self.current_evaluation.save()
+            await self.update_batcher.add_update(self.current_evaluation.save())
 
             self.logger.info(f"📊 Evaluation metrics updated")
 
@@ -662,7 +702,7 @@ class TrainingJobMonitor:
             if self.current_eval_model:
                 self.current_eval_model.metrics = metrics
                 self.current_eval_model.eval_data_path = metrics_json_path
-                await self.current_eval_model.save()
+                await self.update_batcher.add_update(self.current_eval_model.save())
 
                 self.logger.info(f"📊 Evaluation metrics recorded: {metrics}")
             else:
@@ -682,7 +722,7 @@ class TrainingJobMonitor:
                     )
                 self.current_eval_model.time_taken = float(duration)
 
-                await self.current_eval_model.save()
+                await self.update_batcher.add_update(self.current_eval_model.save())
 
                 self.logger.info(f"✅ Model evaluation completed")
 
@@ -702,7 +742,7 @@ class TrainingJobMonitor:
             if job.metadata is None:
                 job.metadata = {}
             job.metadata["error"] = error_message
-            await job.save()
+            await self.update_batcher.add_update(job.save())
             return job
 
         result = await self._safe_db_operation("mark_job_failed", mark_failed)
