@@ -162,26 +162,28 @@ class StorageClient:
                     bucket_name, prefix=prefix, recursive=True
                 )
                 for obj in result:
-                    objects.append(
-                        {
-                            "name": obj.object_name,
-                            "size": obj.size,
-                            "last_modified": obj.last_modified,
-                            "etag": obj.etag,
-                        }
-                    )
+                    if not obj.object_name.endswith('/'):
+                        objects.append(
+                            {
+                                "name": obj.object_name,
+                                "size": obj.size,
+                                "last_modified": obj.last_modified,
+                                "etag": obj.etag,
+                            }
+                        )
             else:
                 # aws s3
                 result = self.client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
                 for obj in result.get("Contents", []):
-                    objects.append(
-                        {
-                            "name": obj["Key"],
-                            "size": obj["Size"],
-                            "last_modified": obj["LastModified"],
-                            "etag": obj["Etag"],
-                        }
-                    )
+                    if not obj['Key'].endswith('/'):
+                        objects.append(
+                            {
+                                "name": obj["Key"],
+                                "size": obj["Size"],
+                                "last_modified": obj["LastModified"],
+                                "etag": obj["Etag"],
+                            }
+                        )
             return objects
         except Exception as e:
             print(f"Error listing objects: {e}")

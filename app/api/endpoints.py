@@ -9,7 +9,6 @@ from models.training_job import TrainingJob, TrainingJobStatus
 from models.training_iteration import TrainingIteration
 from models.epoch_train import EpochTrain
 from models.eval import Eval
-
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()

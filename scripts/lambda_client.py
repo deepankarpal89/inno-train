@@ -5,6 +5,7 @@ import os
 from typing import List, Optional
 from dotenv import load_dotenv
 import time
+import logging
 
 
 class LambdaClient:
@@ -12,9 +13,14 @@ class LambdaClient:
 
     BASE_URL = "https://cloud.lambda.ai/api/v1"
 
-    def __init__(self, api_key: str = None, base_url: str = None):
+    def __init__(self, api_key: str = None, base_url: str = None,logger=None):
         """Initialize the Lambda Cloud client."""
         load_dotenv()
+
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger(__name__)
         if api_key is None:
 
             api_key = os.getenv("LAMBDA_API_KEY")
@@ -38,9 +44,9 @@ class LambdaClient:
             response.raise_for_status()
             return response.json() if response.content else {}
         except requests.exceptions.RequestException as e:
-            print(f"API request failed: {e}")
+            self.logger.info(f"API request failed: {e}")
             if hasattr(e, "response") and e.response is not None:
-                print(f"Response: {e.response.text}")
+                self.logger.info(f"Response: {e.response.text}")
             raise
 
     def list_available_instances(self):
@@ -56,7 +62,7 @@ class LambdaClient:
 
         # Check if any instances are available
         if not avail_gpus:
-            print("No GPU instances currently available")
+            self.logger.info("No GPU instances currently available")
             return None
 
         # Sort by price and select cheapest
@@ -98,7 +104,7 @@ class LambdaClient:
             )
             return True
         except Exception as e:
-            print(f"Failed to terminate instance {instance_id}: {e}")
+            self.logger.info(f"Failed to terminate instance {instance_id}: {e}")
             return False
 
     def list_ssh_keys(self):
@@ -133,7 +139,7 @@ class LambdaClient:
                 "POST", "/instance-operations/launch", json=payload
             )
             instance_id = resp["data"]["instance_ids"][0]
-            print(f"Instance {instance_id} launched, waiting for active state...")
+            self.logger.info(f"Instance {instance_id} launched, waiting for active state...")
 
             # Poll for active status with retry logic
             max_wait_time = 600  # 10 minutes max
@@ -147,10 +153,10 @@ class LambdaClient:
                     status = self.get_instance_status(instance_id)
 
                     if status == "active":
-                        print(f"Instance {instance_id} is active.")
+                        self.logger.info(f"Instance {instance_id} is active.")
                         return self.get_instance(instance_id)
 
-                    print(
+                    self.logger.info(
                         f"Status: {status}, waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                     )
                     time.sleep(poll_interval)
@@ -160,25 +166,25 @@ class LambdaClient:
                 except Exception as poll_error:
                     retry_count += 1
                     if retry_count > max_retries:
-                        print(f"Max retries exceeded during polling: {poll_error}")
+                        self.logger.info(f"Max retries exceeded during polling: {poll_error}")
                         # Instance might still be launching, return what we have
-                        print(
+                        self.logger.info(
                             f"Returning instance {instance_id} (may not be active yet)"
                         )
                         return self.get_instance(instance_id)
 
-                    print(
+                    self.logger.info(
                         f"Polling error (retry {retry_count}/{max_retries}): {poll_error}"
                     )
                     time.sleep(5)  # Short wait before retry
                     elapsed_time += 5
 
             # Timeout reached
-            print(f"Timeout waiting for instance to be active after {max_wait_time}s")
+            self.logger.info(f"Timeout waiting for instance to be active after {max_wait_time}s")
             return self.get_instance(instance_id)
 
         except Exception as e:
-            print(f"Failed to launch instance: {e}")
+            self.logger.info(f"Failed to launch instance: {e}")
             return None
 
     def list_file_systems(self):
@@ -219,16 +225,16 @@ def main():
     client = LambdaClient()
     # First, list all instances to get their IDs
     instances = client.list_instances()
-    print("Available instances:")
+    self.logger.info("Available instances:")
     for instance in instances:
-        print(
+        self.logger.info(
             f"ID: {instance['id']}, IP: {instance.get('ip', 'N/A')}, Name: {instance.get('name', 'N/A')}"
         )
 
     # If you want to get details of a specific instance, use its UUID
     # instance_id = "your-instance-uuid-here"
     # instance_details = client.get_instance(instance_id)
-    # print(instance_details)
+    # self.logger.info(instance_details)
 
 
 if __name__ == "__main__":

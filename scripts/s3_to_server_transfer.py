@@ -9,22 +9,20 @@ It handles downloading files from S3 and uploading them to the target server.
 import os
 import logging
 import tempfile
-from pathlib import Path
 from typing import List, Optional
 from dotenv import load_dotenv
+import concurrent.futures
 
 # Import local modules
-from .storage_client import StorageClient
-from .ssh_executor import SshExecutor
+from scripts.storage_client import StorageClient
+from scripts.ssh_executor import SshExecutor
 
 # Load environment variables
 load_dotenv()
 
 
 class S3ToServerTransfer:
-    def __init__(
-        self, storage_type: str = "minio", logger: Optional[logging.Logger] = None
-    ):
+    def __init__(self, storage_type: str = "minio", logger: Optional[logging.Logger] = None):
         """
         Initialize the transfer utility.
 
@@ -33,72 +31,68 @@ class S3ToServerTransfer:
             logger: Optional logger instance for logging transfer operations
         """
         self.storage = StorageClient(storage_type=storage_type)
-        self.temp_dir = None
         self.logger = logger or logging.getLogger(__name__)
+
+    def get_ssh(self,server_ip: str,username: str = "ubuntu"):
+        ssh = SshExecutor(ip=server_ip, username=username)
+        ssh.connect()
+        return ssh
 
     def _setup_temp_dir(self):
         """Create a temporary directory for file downloads."""
-        if self.temp_dir is None:
-            self.temp_dir = tempfile.mkdtemp(prefix="s3_to_server_")
-            self.logger.debug(f"Using temporary directory: {self.temp_dir}")
-        return self.temp_dir
+        temp_dir = tempfile.mkdtemp(prefix="s3_to_server_")
+        self.logger.debug(f"Using temporary directory: {temp_dir}")
+        return temp_dir
 
-    def _cleanup(self):
+    def _cleanup_temp_dir(self,temp_dir):
         """Clean up temporary files."""
-        if self.temp_dir is not None and os.path.exists(self.temp_dir):
+        if temp_dir is not None and os.path.exists(temp_dir):
             import shutil
 
             try:
-                shutil.rmtree(self.temp_dir)
-                self.logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
+                shutil.rmtree(temp_dir)
+                self.logger.info(f"Cleaned up temporary directory: {temp_dir}")
             except Exception as e:
                 self.logger.warning(f"Failed to clean up temporary directory: {e}")
 
-    def transfer_file_to_server(
-        self,
-        s3_bucket: str,
-        s3_key: str,
-        server_ip: str,
-        server_path: str,
-        username: str = "ubuntu",
-    ) -> bool:
+    def transfer_file_to_server(self,s3_bucket: str,s3_file_path: str,server_ip: str,server_folder_path: str,username: str = "ubuntu",) -> bool:
         """
         Transfer a single file from S3 to a remote server.
 
         Args:
             s3_bucket: S3 bucket name
-            s3_key: Full S3 key of the file to transfer
+            s3_file_path: Full S3 key of the file to transfer
             server_ip: Target server IP address
-            server_path: Target directory on the server
+            server_folder_path: Target directory on the server
             username: SSH username (default: 'ubuntu')
 
         Returns:
             bool: True if file was transferred successfully, False otherwise
         """
         ssh = None
+        temp_dir = None
         try:
             # Set up SSH connection
-            ssh = SshExecutor(ip=server_ip, username=username)
-            ssh.connect()
+            ssh = self.get_ssh(server_ip,username)
 
-            folder_path = os.path.dirname(server_path)
+            folder_path = os.path.dirname(server_folder_path)
             # Create target directory on server if it doesn't exist
             ssh.execute_command(f"mkdir -p {folder_path}")
 
             # Set up temporary directory for download
-            self._setup_temp_dir()
+            temp_dir = self._setup_temp_dir()
 
-            filename = os.path.basename(s3_key)
-            local_path = os.path.join(self.temp_dir, filename)
+            filename = os.path.basename(s3_file_path)
+            local_path = os.path.join(temp_dir, filename)
             remote_path = os.path.join(folder_path, filename)
 
-            self.logger.debug(f"Transferring {s3_key} to {server_ip}:{remote_path}")
+            self.logger.debug(f"Transferring {s3_file_path} to {server_ip}:{remote_path}")
 
             # Download from S3
             if not self.storage.download_file(
-                bucket_name=s3_bucket, object_name=s3_key, file_path=local_path
+                bucket_name=s3_bucket, object_name=s3_file_path, file_path=local_path
             ):
-                self.logger.error(f"Failed to download {s3_key} from S3")
+                self.logger.error(f"Failed to download {s3_file_path} from S3")
                 return False
 
             # Upload to server
@@ -113,55 +107,46 @@ class S3ToServerTransfer:
             self.logger.error(f"Transfer failed: {str(e)}")
             return False
         finally:
+            if temp_dir:
+                self._cleanup_temp_dir(temp_dir)
             if ssh:
                 ssh.disconnect()
 
-    def transfer_file_to_s3(
-        self,
-        server_ip: str,
-        server_path: str,
-        s3_bucket: str,
-        s3_key: str,
-        username: str = "ubuntu",
-    ) -> bool:
+    def transfer_file_to_s3(self,server_ip: str,server_file_path: str,s3_bucket: str,s3_file_path: str,username: str = "ubuntu") -> bool:
         """
         Transfer a single file from a remote server to S3.
 
         Args:
             server_ip: Source server IP address
-            server_path: Full path to the file on the server
+            server_file_path: Full path to the file on the server
             s3_bucket: Target S3 bucket name
-            s3_key: Target S3 key for the file
+            s3_file_path: Target S3 key for the file
             username: SSH username (default: 'ubuntu')
 
         Returns:
             bool: True if file was transferred successfully, False otherwise
         """
         ssh = None
+        temp_dir = None
         try:
             # Set up SSH connection
-            ssh = SshExecutor(ip=server_ip, username=username)
-            ssh.connect()
+            ssh = self.get_ssh(server_ip,username)
 
             # Set up temporary directory for download
-            self._setup_temp_dir()
+            temp_dir = self._setup_temp_dir()
 
-            filename = os.path.basename(server_path)
-            local_path = os.path.join(self.temp_dir, filename)
+            filename = os.path.basename(server_file_path)
+            local_path = os.path.join(temp_dir, filename)
 
-            self.logger.debug(
-                f"Transferring {server_ip}:{server_path} to s3://{s3_bucket}/{s3_key}"
-            )
+            self.logger.debug(f"Transferring {server_ip}:{server_file_path} to s3://{s3_bucket}/{s3_file_path}")
 
             # Download from server
-            if not ssh.download_file(server_path, local_path):
-                self.logger.error(f"Failed to download {server_path} from server")
+            if not ssh.download_file(server_file_path, local_path):
+                self.logger.error(f"Failed to download {server_file_path} from server")
                 return False
 
             # Upload to S3
-            if not self.storage.upload_file(
-                file_path=local_path, bucket_name=s3_bucket, object_name=s3_key
-            ):
+            if not self.storage.upload_file(file_path=local_path, bucket_name=s3_bucket, object_name=s3_file_path):
                 self.logger.error(f"Failed to upload {filename} to S3")
                 return False
 
@@ -172,76 +157,36 @@ class S3ToServerTransfer:
             self.logger.error(f"Transfer failed: {str(e)}")
             return False
         finally:
+            if temp_dir:
+                self._cleanup_temp_dir(temp_dir)
             if ssh:
                 ssh.disconnect()
 
-    def transfer_files_to_server(
-        self,
-        s3_bucket: str,
-        s3_prefix: str,
-        server_ip: str,
-        server_path: str,
-        username: str = "ubuntu",
-        file_extensions: Optional[List[str]] = None,
-        ) -> bool:
-        """
-        Transfer files from S3 to a remote server.
-
-        Args:
-            s3_bucket: S3 bucket name
-            s3_prefix: S3 prefix (folder path)
-            server_ip: Target server IP address
-            server_path: Target directory on the server
-            username: SSH username (default: 'ubuntu')
-            file_extensions: Optional list of file extensions to filter by
-
-        Returns:
-            bool: True if all files were transferred successfully, False otherwise
-        """
+    def transfer_files_to_server(self,s3_bucket: str,s3_folder_path: str,server_ip: str,server_folder_path: str,
+        username: str = "ubuntu",file_extensions: Optional[List[str]] = None,) -> bool:
         ssh = None
         success = True
+        temp_dir = None
 
         try:
             # List files in S3
-            objects = self.storage.list_objects(s3_bucket, prefix=s3_prefix)
-            if not objects:
-                self.logger.warning(f"No files found in {s3_bucket}/{s3_prefix}")
-                return False
-
-            # Filter by file extensions if specified
-            if file_extensions:
-                objects = [
-                    obj
-                    for obj in objects
-                    if any(
-                        obj["name"].lower().endswith(ext.lower())
-                        for ext in file_extensions
-                    )
-                ]
-                if not objects:
-                    self.logger.warning(
-                        f"No files with extensions {file_extensions} found in {s3_bucket}/{s3_prefix}"
-                    )
-                    return False
-
-            self.logger.info(f"Found {len(objects)} file(s) to transfer")
+            objects = self.get_s3_file_paths(s3_bucket,s3_folder_path)
 
             # Set up SSH connection
-            ssh = SshExecutor(ip=server_ip, username=username)
-            ssh.connect()
-            folder_path = os.path.dirname(server_path)
+            ssh = self.get_ssh(server_ip,username)
+            folder_path = os.path.dirname(server_folder_path)
             # Create target directory on server if it doesn't exist
             ssh.execute_command(f"mkdir -p {folder_path}")
 
             # Set up temporary directory for downloads
-            self._setup_temp_dir()
+            temp_dir = self._setup_temp_dir()
 
             # Transfer each file
             for obj in objects:
-                s3_key = obj["name"]
+                s3_key = obj
                 filename = os.path.basename(s3_key)
-                local_path = os.path.join(self.temp_dir, filename)
-                remote_path = os.path.join(server_path, filename)
+                local_path = os.path.join(temp_dir, filename)
+                remote_path = os.path.join(folder_path, filename)
 
                 self.logger.debug(f"Transferring {s3_key} to {server_ip}:{remote_path}")
 
@@ -273,217 +218,78 @@ class S3ToServerTransfer:
             return False
 
         finally:
-            # Clean up connections and temporary files
             if ssh:
                 ssh.disconnect()
-            self._cleanup()
+            if temp_dir:
+                self._cleanup_temp_dir(temp_dir)
 
-    def transfer_files_to_s3(
-        self,
-        server_ip: str,
-        server_path: str,
-        s3_bucket: str,
-        s3_prefix: str = "",
-        username: str = "ubuntu",
-        file_extensions: Optional[List[str]] = None,
-        recursive: bool = True,  # Changed default to True
-    ) -> bool:
-        """
-        Transfer files from a remote server to S3 while maintaining directory structure.
+    def get_server_file_paths(self,server_ip,server_folder_path,username: str = "ubuntu",file_extensions: Optional[List[str]] = None,recursive: bool = True):
+        ssh = self.get_ssh(server_ip,username)
 
-        Args:
-            server_ip: Source server IP address
-            server_path: Source directory on the server
-            s3_bucket: Target S3 bucket name
-            s3_prefix: Target S3 prefix (base folder path, default: "")
-            username: SSH username (default: 'ubuntu')
-            file_extensions: Optional list of file extensions to filter by
-            recursive: Whether to transfer files in subdirectories (default: True)
+        # Normalize paths
+        server_path = server_folder_path.rstrip("/")
 
-        Returns:
-            bool: True if all files were transferred successfully, False otherwise
-        """
-        ssh = None
-        success = True
+        # List files on the server
+        find_cmd = f"find {server_path} -type f"
+        if not recursive:
+            find_cmd = f"find {server_path} -maxdepth 1 -type f"
 
-        try:
-            # Set up SSH connection
-            ssh = SshExecutor(ip=server_ip, username=username)
-            ssh.connect()
-
-            # Normalize paths
-            server_path = server_path.rstrip("/")
-            base_dir = (
-                os.path.dirname(server_path)
-                if not server_path.endswith("*")
-                else os.path.dirname(server_path.rstrip("*"))
-            )
-
-            # List files on the server
-            find_cmd = f"find {server_path} -type f"
-            if not recursive:
-                find_cmd = f"find {server_path} -maxdepth 1 -type f"
-
-            if file_extensions:
+        if file_extensions:
                 ext_conditions = " -o ".join(
                     [f'-iname "*{ext}"' for ext in file_extensions]
                 )
                 find_cmd = f"{find_cmd} \\( {ext_conditions} \\)"
 
-            result = ssh.execute_command(find_cmd)
-            if not result or not result.stdout:
-                self.logger.warning(f"No files found in {server_path}")
-                return False
+        result = ssh.execute_command(find_cmd)
+        if not result or not result.stdout:
+            self.logger.warning(f"No files found in {server_path}")
+            ssh.disconnect()
+            return []
+        
+        file_paths = [line.strip() for line in result.stdout.split("\n") if line.strip()]
+        self.logger.info(f"Found {len(file_paths)} file(s) in {server_path}")
+        ssh.disconnect()
+        return file_paths   
 
-            file_paths = [
-                line.strip() for line in result.stdout.split("\n") if line.strip()
-            ]
-            self.logger.info(f"Found {len(file_paths)} file(s) to transfer")
+    def transfer_files_to_s3(self,server_ip: str,server_folder_path: str,s3_bucket: str,s3_folder_path: str,username: str = "ubuntu",file_extensions: Optional[List[str]] = None,recursive: bool = True) -> bool:
+        success = True
 
-            # Set up temporary directory for downloads
-            self._setup_temp_dir()
+        try:
+            file_paths = self.get_server_file_paths(server_ip,server_folder_path,username,file_extensions,recursive)
 
-            # Transfer each file
-            for file_path in file_paths:
-                try:
-                    # Calculate relative path to maintain directory structure
-                    rel_path = os.path.relpath(file_path, base_dir)
-                    local_path = os.path.join(
-                        self.temp_dir, os.path.basename(file_path)
-                    )
-
-                    # Download from server
-                    if not ssh.download_file(file_path, local_path):
-                        self.logger.error(f"Failed to download {file_path} from server")
-                        success = False
-                        continue
-
-                    # Construct S3 key with full path
-                    s3_key = os.path.join(s3_prefix, rel_path).replace("\\", "/")
-
-                    # Upload to S3
-                    if not self.storage.upload_file(
-                        file_path=local_path, bucket_name=s3_bucket, object_name=s3_key
-                    ):
-                        self.logger.error(f"Failed to upload {file_path} to S3")
-                        success = False
-                        continue
-
-                    self.logger.info(
-                        f"Successfully transferred {file_path} to s3://{s3_bucket}/{s3_key}"
-                    )
-
-                except Exception as e:
-                    self.logger.error(f"Error transferring {file_path}: {str(e)}")
-                    success = False
-
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                for server_file_path in file_paths:
+                    relative_path = os.path.relpath(server_file_path, server_folder_path)
+                    s3_file_path = os.path.join(s3_folder_path, relative_path)
+                    futures.append(executor.submit(self.transfer_file_to_s3,server_ip,server_file_path,s3_bucket,s3_file_path,username))
+                results = [f.result() for f in futures]
+                success = all(results)
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error transferring {server_folder_path}: {str(e)}")
+            success = False
             return success
 
-        except Exception as e:
-            self.logger.error(f"Transfer failed: {str(e)}")
-            return False
-        finally:
-            # Clean up connections and temporary files
-            if ssh:
-                ssh.disconnect()
-            self._cleanup()
+    def get_s3_file_paths(self,s3_bucket,s3_folder_path):
+        objects =  self.storage.list_objects(bucket_name=s3_bucket,prefix=s3_folder_path)
+        if not objects:
+            self.logger.warning(f"No files found in {s3_bucket}/{s3_folder_path}")
+            return []
+        return [obj["name"] for obj in objects]
 
 
 def main():
-    import argparse
+    from scripts.file_logger import get_file_logger
+    logger = get_file_logger('file_transfer')
 
-    parser = argparse.ArgumentParser(
-        description="Transfer files between S3 and a remote server"
-    )
-    subparsers = parser.add_subparsers(
-        dest="command", required=True, help="Transfer direction"
-    )
-
-    # Parser for S3 to Server transfer
-    s3_to_server = subparsers.add_parser(
-        "s3-to-server", help="Transfer files from S3 to a remote server"
-    )
-    s3_to_server.add_argument("--bucket", required=True, help="S3 bucket name")
-    s3_to_server.add_argument("--prefix", default="", help="S3 prefix (folder path)")
-    s3_to_server.add_argument(
-        "--server", required=True, help="Target server IP or hostname"
-    )
-    s3_to_server.add_argument(
-        "--path", required=True, help="Target directory on the server"
-    )
-    s3_to_server.add_argument(
-        "--user", default="ubuntu", help="SSH username (default: ubuntu)"
-    )
-    s3_to_server.add_argument(
-        "--ext", nargs="+", help="File extensions to include (e.g., .csv .txt)"
-    )
-
-    # Parser for Server to S3 transfer
-    server_to_s3 = subparsers.add_parser(
-        "server-to-s3", help="Transfer files from a remote server to S3"
-    )
-    server_to_s3.add_argument(
-        "--server", required=True, help="Source server IP or hostname"
-    )
-    server_to_s3.add_argument(
-        "--path", required=True, help="Source directory on the server"
-    )
-    server_to_s3.add_argument("--bucket", required=True, help="S3 bucket name")
-    server_to_s3.add_argument(
-        "--prefix", default="", help="S3 prefix (folder path, default: root)"
-    )
-    server_to_s3.add_argument(
-        "--user", default="ubuntu", help="SSH username (default: ubuntu)"
-    )
-    server_to_s3.add_argument(
-        "--ext", nargs="+", help="File extensions to include (e.g., .csv .txt)"
-    )
-    server_to_s3.add_argument(
-        "--recursive", action="store_true", help="Transfer files in subdirectories"
-    )
-
-    # Common arguments
-    for p in [s3_to_server, server_to_s3]:
-        p.add_argument(
-            "--storage",
-            default="minio",
-            choices=["minio", "aws_s3"],
-            help="Storage type (default: minio)",
-        )
-
-    args = parser.parse_args()
-
-    transfer = S3ToServerTransfer(storage_type=args.storage)
-
-    if args.command == "s3-to-server":
-        success = transfer.transfer_files(
-            s3_bucket=args.bucket,
-            s3_prefix=args.prefix,
-            server_ip=args.server,
-            server_path=args.path,
-            username=args.user,
-            file_extensions=args.ext,
-        )
-        success_msg = "All files transferred successfully"
-        failure_msg = "Some files failed to transfer"
-    else:  # server-to-s3
-        success = transfer.transfer_files_to_s3(
-            server_ip=args.server,
-            server_path=args.path,
-            s3_bucket=args.bucket,
-            s3_prefix=args.prefix,
-            username=args.user,
-            file_extensions=args.ext,
-            recursive=args.recursive,
-        )
-        success_msg = "All files transferred to S3 successfully"
-        failure_msg = "Some files failed to transfer to S3"
-
-    if success:
-        print(success_msg)
-    else:
-        print(failure_msg)
-        exit(1)
+    file_transfer = S3ToServerTransfer(logger=logger)
+    server_ip = '157.151.235.14'
+    s3_bucket = os.getenv("BUCKET_NAME")
+    server_folder_path = '/home/ubuntu/rlhf-virginia/output/'
+    s3_folder_path = 'media/projects/7bce834a-bd56-4fa6-89d6-dcd2acb0b4cd/train/'
+    file_transfer.transfer_files_to_s3(server_folder_path=server_folder_path,s3_folder_path=s3_folder_path,s3_bucket=s3_bucket,server_ip=server_ip)
 
 
 if __name__ == "__main__":

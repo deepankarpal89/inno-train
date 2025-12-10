@@ -180,20 +180,28 @@ class TrainingJobMonitor:
             self.logger.error(f"Error calculating duration: {e}")
             return 0.0
 
+    async def _load_training_job(self):
+        return await TrainingJob.filter(uuid=self.training_job_uuid).first()
+
     async def start_monitoring(self):
         """Start monitoring the global.json file."""
         self.logger.info(f"🔍 Starting monitoring for job {self.training_job_uuid}")
-
+        self.job = await self._load_training_job() 
         # Load the TrainingJob instance for foreign key relationships
         try:
-            self.training_job = await TrainingJob.get(uuid=self.training_job_uuid)
+            # Use run_in_executor to run in main thread's event loop
+            loop = asyncio.get_running_loop()
+            self.training_job = await loop.run_in_executor(
+                None,
+                lambda: asyncio.run(self._load_training_job())
+            )
             self.logger.info(f"✅ Loaded training job: {self.training_job.project_id}")
         except Exception as e:
             self.logger.error(
                 f"❌ Failed to load training job {self.training_job_uuid}: {e}"
             )
             return
-
+        
         try:
             while not self.should_stop:
                 try:

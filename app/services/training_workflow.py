@@ -15,7 +15,8 @@ from scripts.utils import ist_now
 from scripts.ssh_executor import SshExecutor
 from app.services.training_job_monitor import TrainingJobMonitor
 from models.training_job import TrainingJob, TrainingJobStatus
-
+from concurrent.futures import ThreadPoolExecutor
+from scripts.file_logger import get_file_logger
 
 class WorkflowError(Exception):
     """Base exception for workflow errors."""
@@ -82,6 +83,8 @@ class WorkflowConstants:
     # Logging Configuration
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    TRANSER_THREAD_COUNT = 5
+
 
 @dataclass
 class WorkflowState:
@@ -101,14 +104,19 @@ class TrainingWorkflow:
         job_uuid: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
         job: Optional[TrainingJob] = None,
-    ):
+        ):
         """Private constructor. Use create() or create_with_job() factory methods instead."""
         load_dotenv()
-        self.logger = logger or self._create_logger()
+        #self.logger = logger or self._create_logger()
+        if job_uuid:
+            self.logger = get_file_logger(f"workflow_{job_uuid}")
+        else:
+            self.logger = get_file_logger(f"workflow_no_job_uuid")
 
         # Core services (always available)
         self.gpu_client = LambdaClient()
         self.file_transfer = S3ToServerTransfer(logger=self.logger)
+        self.executor = ThreadPoolExecutor(max_workers=WorkflowConstants.TRANSER_THREAD_COUNT)
 
         # Job-specific state (reset for each job)
         self._reset_job_state()
@@ -123,11 +131,12 @@ class TrainingWorkflow:
                 self.state.instance_ip = job.machine_config.get("instance_ip", None)
             if job.training_request:
                 self.data = self._parse_request_data(job.training_request)
+        
 
     @classmethod
     async def for_existing_job(
         cls, job_uuid: str, logger: Optional[logging.Logger] = None
-    ):
+        ):
         """Create workflow from an existing job in the database."""
         job = await TrainingJob.get(uuid=job_uuid)
         if not job:
@@ -387,11 +396,7 @@ class TrainingWorkflow:
 
     async def _transfer_all_files(self) -> None:
         """Transfer all required files to GPU server."""
-        s3_bucket = os.getenv("BUCKET_NAME")
-        if not s3_bucket:
-            raise FileTransferError(
-                "S3 bucket not configured", job_uuid=self.state.job_uuid
-            )
+        s3_bucket = self.job_s3_bucket
 
         # Create transfer tasks for parallel execution
         transfer_tasks = [
@@ -412,7 +417,7 @@ class TrainingWorkflow:
 
     async def _transfer_file(
         self, s3_bucket: str, s3_prefix: str, server_path: str, description: str
-    ) -> None:
+        ) -> None:
         """Transfer a single file from S3 to server."""
         try:
             await asyncio.to_thread(
@@ -495,22 +500,8 @@ class TrainingWorkflow:
 
         try:
             # Get output paths
-            if not self.job.project_id or not self.job.training_run_id:
-                self.logger.warning(
-                    "Missing project_id or training_run_id, skipping output download"
-                )
-                return False
-
-            s3_bucket = os.getenv("BUCKET_NAME")
-            if not s3_bucket:
-                self.logger.warning("No S3 bucket configured, skipping output download")
-                return False
-
-            s3_path = f"media/projects/{self.job.project_id}/{self.job.training_run_id}"
-            self.logger.info(
-                f"📎 Transfer params: {self.state.instance_ip}:output/ -> s3://{s3_bucket}/{s3_path}"
-            )
-
+            s3_bucket = self.job_s3_bucket
+            s3_path = self.job_s3_path
             # Transfer to S3
             self.logger.info("🚀 Starting file transfer to S3...")
 
@@ -564,6 +555,23 @@ class TrainingWorkflow:
         await self._terminate_instance()
 
         self.logger.info("✅ Resource cleanup completed")
+
+    @property
+    def job_s3_bucket(self):
+        s3_bucket = os.getenv("BUCKET_NAME")
+        if not s3_bucket:
+            raise ValueError("No S3 bucket configured")
+        return s3_bucket
+    
+    @property
+    def job_s3_path(self):
+        if not self.job.project_id and self.job.training_run_id:
+            raise ValueError("No project_id or training_run_id configured")
+        return f"media/projects/{self.job.project_id}/{self.job.training_run_id}"
+    
+    @property
+    def log_file_path(self):
+        return f"logs/workflow_{self.job_uuid}.log"
 
     async def close_ssh_connection(self) -> None:
         if self.ssh_executor:

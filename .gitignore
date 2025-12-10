@@ -41,8 +41,8 @@ ENV/
 innotrain.db
 
 # Logs
-*.log
-logs/
+# *.log
+# logs/
 
 # Local development
 .env

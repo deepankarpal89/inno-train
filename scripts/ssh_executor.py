@@ -21,10 +21,10 @@ class CommandResult:
 
 
 class SshExecutor:
-    def __init__(self, ip, username="ubuntu",reuse_conection=True):
+    def __init__(self, ip, username: str="ubuntu",reuse_conection: bool=True):
         self.ip = ip
         self.username = username
-        self.timeout = 120
+        self.timeout = 200
         self.client = None
         self.reuse_conection = reuse_conection
         self.sftp = None

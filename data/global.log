@@ -1,0 +1,339 @@
+2025-07-05 23:12:59 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-05 23:12:59 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 1 to 6
+2025-07-05 23:12:59 [INFO] [GROUP_ITER] Running Iteration 1
+2025-07-05 23:12:59 [INFO] [RUN_ITERATION] Started Iteration run_1
+2025-07-05 23:12:59 [INFO] [RUN_TRAJECTORY] Started
+2025-07-05 23:47:29 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 34.50 min
+2025-07-05 23:47:29 [INFO] [RUN_TRAINING] Started
+2025-07-06 00:02:58 [INFO] [RUN_TRAINING] Finished | Time Taken: 15.48 min
+2025-07-06 00:02:58 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 00:02:58 [INFO] 
+2025-07-06 00:02:58 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_1 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 00:04:31 [INFO] 
+2025-07-06 00:04:31 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_1 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 00:05:54 [INFO] 
+2025-07-06 00:05:54 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_1 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 00:07:17 [INFO] 
+2025-07-06 00:07:17 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_1 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 00:07:55 [INFO] 
+2025-07-06 00:07:55 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_1 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 00:08:28 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 5.50 min
+2025-07-06 00:08:28 [INFO] [RUN_ITERATION] Finished Iteration run_1 | Time Taken: 55.47 min
+2025-07-06 00:08:28 [INFO] [GROUP_ITER] Running Iteration 2
+2025-07-06 00:08:28 [INFO] [RUN_ITERATION] Started Iteration run_2
+2025-07-06 00:08:28 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 00:44:23 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 35.92 min
+2025-07-06 00:44:23 [INFO] [RUN_TRAINING] Started
+2025-07-06 00:59:27 [INFO] [RUN_TRAINING] Finished | Time Taken: 15.07 min
+2025-07-06 00:59:27 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 00:59:27 [INFO] 
+2025-07-06 00:59:27 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_2 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 01:00:45 [INFO] 
+2025-07-06 01:00:45 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_2 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 01:02:18 [INFO] 
+2025-07-06 01:02:18 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_2 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 01:03:36 [INFO] 
+2025-07-06 01:03:36 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_2 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 01:04:49 [INFO] 
+2025-07-06 01:04:49 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_2 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 01:05:57 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 6.51 min
+2025-07-06 01:05:57 [INFO] [RUN_ITERATION] Finished Iteration run_2 | Time Taken: 57.49 min
+2025-07-06 01:05:57 [INFO] [GROUP_ITER] Running Iteration 3
+2025-07-06 01:05:57 [INFO] [RUN_ITERATION] Started Iteration run_3
+2025-07-06 01:05:57 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 01:40:12 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 34.25 min
+2025-07-06 01:40:12 [INFO] [RUN_TRAINING] Started
+2025-07-06 01:55:11 [INFO] [RUN_TRAINING] Finished | Time Taken: 14.98 min
+2025-07-06 01:55:11 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 01:55:11 [INFO] 
+2025-07-06 01:55:11 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_3 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 01:56:29 [INFO] 
+2025-07-06 01:56:29 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_3 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 01:57:57 [INFO] 
+2025-07-06 01:57:57 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_3 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 01:59:15 [INFO] 
+2025-07-06 01:59:15 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_3 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 02:00:28 [INFO] 
+2025-07-06 02:00:28 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_3 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 02:01:51 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 6.67 min
+2025-07-06 02:01:51 [INFO] [RUN_ITERATION] Finished Iteration run_3 | Time Taken: 55.91 min
+2025-07-06 02:01:51 [INFO] [GROUP_ITER] Running Iteration 4
+2025-07-06 02:01:51 [INFO] [RUN_ITERATION] Started Iteration run_4
+2025-07-06 02:01:51 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 02:37:46 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 35.92 min
+2025-07-06 02:37:46 [INFO] [RUN_TRAINING] Started
+2025-07-06 02:52:25 [INFO] [RUN_TRAINING] Finished | Time Taken: 14.65 min
+2025-07-06 02:52:25 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 02:52:25 [INFO] 
+2025-07-06 02:52:25 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_4 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 02:53:34 [INFO] 
+2025-07-06 02:53:34 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_4 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 02:54:42 [INFO] 
+2025-07-06 02:54:42 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_4 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 02:56:05 [INFO] 
+2025-07-06 02:56:05 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_4 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 02:57:08 [INFO] 
+2025-07-06 02:57:08 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_4 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 02:58:21 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 5.93 min
+2025-07-06 02:58:21 [INFO] [RUN_ITERATION] Finished Iteration run_4 | Time Taken: 56.49 min
+2025-07-06 02:58:21 [INFO] [GROUP_ITER] Running Iteration 5
+2025-07-06 02:58:21 [INFO] [RUN_ITERATION] Started Iteration run_5
+2025-07-06 02:58:21 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 03:31:46 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 33.42 min
+2025-07-06 03:31:46 [INFO] [RUN_TRAINING] Started
+2025-07-06 03:45:50 [INFO] [RUN_TRAINING] Finished | Time Taken: 14.06 min
+2025-07-06 03:45:50 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 03:45:50 [INFO] 
+2025-07-06 03:45:50 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_5 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 03:46:48 [INFO] 
+2025-07-06 03:46:48 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_5 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 03:47:46 [INFO] 
+2025-07-06 03:47:46 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_5 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 03:48:43 [INFO] 
+2025-07-06 03:48:43 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_5 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 03:49:36 [INFO] 
+2025-07-06 03:49:36 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_5 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 03:50:28 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 4.64 min
+2025-07-06 03:50:28 [INFO] [RUN_ITERATION] Finished Iteration run_5 | Time Taken: 52.13 min
+2025-07-06 03:50:28 [INFO] [GROUP_ITER] Running Iteration 6
+2025-07-06 03:50:28 [INFO] [RUN_ITERATION] Started Iteration run_6
+2025-07-06 03:50:28 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 04:23:08 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 32.66 min
+2025-07-06 04:23:08 [INFO] [RUN_TRAINING] Started
+2025-07-06 04:36:47 [INFO] [RUN_TRAINING] Finished | Time Taken: 13.64 min
+2025-07-06 04:36:47 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 04:36:47 [INFO] 
+2025-07-06 04:36:47 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 04:37:55 [INFO] 
+2025-07-06 04:37:55 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 04:38:58 [INFO] 
+2025-07-06 04:38:58 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 04:39:51 [INFO] 
+2025-07-06 04:39:51 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 04:40:49 [INFO] 
+2025-07-06 04:40:49 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 04:41:47 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 5.00 min
+2025-07-06 04:41:47 [INFO] [RUN_ITERATION] Finished Iteration run_6 | Time Taken: 51.30 min
+2025-07-06 04:41:47 [INFO] [RUN_GP_ITERATION] Finished up to Iteration run_6 | Time Taken: 328.79 min
+2025-07-06 07:43:13 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 07:43:13 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 6
+2025-07-06 07:43:13 [ERROR] Traceback (most recent call last):
+2025-07-06 07:43:13 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 07:43:13 [ERROR] _run_group_iterations(
+2025-07-06 07:43:13 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 153, in _run_group_iterations
+2025-07-06 07:43:13 [ERROR] log_prefix("RUN_GP_ITERATION", f"Finished up to Iteration {training_name} | Time Taken: {duration:.2f} min")
+2025-07-06 07:43:13 [ERROR] UnboundLocalError
+2025-07-06 07:43:13 [ERROR] :
+2025-07-06 07:43:13 [ERROR] local variable 'training_name' referenced before assignment
+2025-07-06 07:48:15 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 07:48:15 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 2
+2025-07-06 07:48:15 [ERROR] Traceback (most recent call last):
+2025-07-06 07:48:15 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 07:48:15 [ERROR] _run_group_iterations(
+2025-07-06 07:48:15 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 153, in _run_group_iterations
+2025-07-06 07:48:15 [ERROR] log_prefix("RUN_GP_ITERATION", f"Finished up to Iteration {training_name} | Time Taken: {duration:.2f} min")
+2025-07-06 07:48:15 [ERROR] UnboundLocalError
+2025-07-06 07:48:15 [ERROR] :
+2025-07-06 07:48:15 [ERROR] local variable 'training_name' referenced before assignment
+2025-07-06 07:58:05 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 07:58:05 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 2
+2025-07-06 07:58:05 [ERROR] Traceback (most recent call last):
+2025-07-06 07:58:05 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 07:58:05 [ERROR] _run_group_iterations(
+2025-07-06 07:58:05 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 153, in _run_group_iterations
+2025-07-06 07:58:05 [ERROR] log_prefix("RUN_GP_ITERATION", f"Finished up to Iteration {training_name} | Time Taken: {duration:.2f} min")
+2025-07-06 07:58:05 [ERROR] UnboundLocalError
+2025-07-06 07:58:05 [ERROR] :
+2025-07-06 07:58:05 [ERROR] local variable 'training_name' referenced before assignment
+2025-07-06 08:01:41 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 08:01:41 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 9
+2025-07-06 08:01:41 [INFO] [GROUP_ITER] Running Iteration 7
+2025-07-06 08:01:41 [INFO] [RUN_ITERATION] Started Iteration run_7
+2025-07-06 08:01:41 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 08:01:44 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 0.06 min
+2025-07-06 08:01:44 [INFO] [RUN_TRAINING] Started
+2025-07-06 08:01:48 [INFO] [RUN_TRAINING] Finished | Time Taken: 0.06 min
+2025-07-06 08:01:48 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 08:01:48 [ERROR] Traceback (most recent call last):
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 08:01:48 [ERROR] _run_group_iterations(
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 141, in _run_group_iterations
+2025-07-06 08:01:48 [ERROR] _run_iteration(project_name, trajectory_name, training_name,
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 110, in _run_iteration
+2025-07-06 08:01:48 [ERROR] _run_eval_training(project_name, training_name, trajectory_name, dataset, topk)
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 91, in _run_eval_training
+2025-07-06 08:01:48 [ERROR] evaluate_training(project_name, training_name, dataset=dataset, topk=topk)
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/evaluate_training.py", line 11, in evaluate_training
+2025-07-06 08:01:48 [ERROR] model_name_list = get_all_file_names(folder_path)
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in get_all_file_names
+2025-07-06 08:01:48 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:01:48 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in <listcomp>
+2025-07-06 08:01:48 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:01:48 [ERROR]   File "/usr/lib/python3.10/pathlib.py", line 1017, in iterdir
+2025-07-06 08:01:48 [ERROR] for name in self._accessor.listdir(self):
+2025-07-06 08:01:48 [ERROR] FileNotFoundError
+2025-07-06 08:01:48 [ERROR] :
+2025-07-06 08:01:48 [ERROR] [Errno 2] No such file or directory: 'classify_entity/training/run_7/models'
+2025-07-06 08:03:56 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 08:03:56 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 6 to 8
+2025-07-06 08:03:56 [INFO] [GROUP_ITER] Running Iteration 6
+2025-07-06 08:03:56 [INFO] [RUN_ITERATION] Started Iteration run_6
+2025-07-06 08:03:56 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 08:04:00 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 0.06 min
+2025-07-06 08:04:00 [INFO] [RUN_TRAINING] Started
+2025-07-06 08:04:03 [INFO] [RUN_TRAINING] Finished | Time Taken: 0.06 min
+2025-07-06 08:04:03 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 08:04:03 [INFO] 
+2025-07-06 08:04:03 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_6 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 08:04:08 [ERROR] Traceback (most recent call last):
+2025-07-06 08:04:08 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 08:04:08 [ERROR] _run_group_iterations(
+2025-07-06 08:04:08 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 141, in _run_group_iterations
+2025-07-06 08:04:08 [ERROR] _run_iteration(project_name, trajectory_name, training_name,
+2025-07-06 08:04:08 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 110, in _run_iteration
+2025-07-06 08:04:08 [ERROR] _run_eval_training(project_name, training_name, trajectory_name, dataset, topk)
+2025-07-06 08:04:08 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 91, in _run_eval_training
+2025-07-06 08:04:08 [ERROR] evaluate_training(project_name, training_name, dataset=dataset, topk=topk)
+2025-07-06 08:04:08 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/evaluate_training.py", line 41, in evaluate_training
+2025-07-06 08:04:08 [ERROR] subprocess.run(command, check=True)
+2025-07-06 08:04:08 [ERROR]   File "/usr/lib/python3.10/subprocess.py", line 526, in run
+2025-07-06 08:04:08 [ERROR] raise CalledProcessError(retcode, process.args,
+2025-07-06 08:04:08 [ERROR] subprocess
+2025-07-06 08:04:08 [ERROR] .
+2025-07-06 08:04:08 [ERROR] CalledProcessError
+2025-07-06 08:04:08 [ERROR] :
+2025-07-06 08:04:08 [ERROR] Command '['torchrun', '--nproc_per_node=8', 'scripts/evaluate_model.py', '--project_name', 'classify_entity', '--training_name', 'run_6', '--dataset', 'cv', '--topk', '1', '--model_epoch', '1']' returned non-zero exit status 1.
+2025-07-06 08:06:55 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 08:06:55 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 8
+2025-07-06 08:06:55 [INFO] [GROUP_ITER] Running Iteration 7
+2025-07-06 08:06:55 [INFO] [RUN_ITERATION] Started Iteration run_7
+2025-07-06 08:06:55 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 08:06:59 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 0.06 min
+2025-07-06 08:06:59 [INFO] [RUN_TRAINING] Started
+2025-07-06 08:07:03 [INFO] [RUN_TRAINING] Finished | Time Taken: 0.06 min
+2025-07-06 08:07:03 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 08:07:03 [ERROR] Traceback (most recent call last):
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 174, in <module>
+2025-07-06 08:07:03 [ERROR] _run_group_iterations(
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 141, in _run_group_iterations
+2025-07-06 08:07:03 [ERROR] _run_iteration(project_name, trajectory_name, training_name,
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 110, in _run_iteration
+2025-07-06 08:07:03 [ERROR] _run_eval_training(project_name, training_name, trajectory_name, dataset, topk)
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 91, in _run_eval_training
+2025-07-06 08:07:03 [ERROR] evaluate_training(project_name, training_name, dataset=dataset, topk=topk)
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/evaluate_training.py", line 11, in evaluate_training
+2025-07-06 08:07:03 [ERROR] model_name_list = get_all_file_names(folder_path)
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in get_all_file_names
+2025-07-06 08:07:03 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:07:03 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in <listcomp>
+2025-07-06 08:07:03 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:07:03 [ERROR]   File "/usr/lib/python3.10/pathlib.py", line 1017, in iterdir
+2025-07-06 08:07:03 [ERROR] for name in self._accessor.listdir(self):
+2025-07-06 08:07:03 [ERROR] FileNotFoundError
+2025-07-06 08:07:03 [ERROR] :
+2025-07-06 08:07:03 [ERROR] [Errno 2] No such file or directory: 'classify_entity/training/run_7/models'
+2025-07-06 08:09:21 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 08:09:21 [INFO] run_6
+2025-07-06 08:09:21 [INFO] 2
+2025-07-06 08:09:21 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 8
+2025-07-06 08:09:21 [INFO] [GROUP_ITER] Running Iteration 7
+2025-07-06 08:09:21 [INFO] [RUN_ITERATION] Started Iteration run_7
+2025-07-06 08:09:21 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 08:09:25 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 0.06 min
+2025-07-06 08:09:25 [INFO] [RUN_TRAINING] Started
+2025-07-06 08:09:29 [INFO] [RUN_TRAINING] Finished | Time Taken: 0.06 min
+2025-07-06 08:09:29 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 08:09:29 [ERROR] Traceback (most recent call last):
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 176, in <module>
+2025-07-06 08:09:29 [ERROR] _run_group_iterations(
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 143, in _run_group_iterations
+2025-07-06 08:09:29 [ERROR] _run_iteration(project_name, trajectory_name, training_name,
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 110, in _run_iteration
+2025-07-06 08:09:29 [ERROR] _run_eval_training(project_name, training_name, trajectory_name, dataset, topk)
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 91, in _run_eval_training
+2025-07-06 08:09:29 [ERROR] evaluate_training(project_name, training_name, dataset=dataset, topk=topk)
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/evaluate_training.py", line 11, in evaluate_training
+2025-07-06 08:09:29 [ERROR] model_name_list = get_all_file_names(folder_path)
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in get_all_file_names
+2025-07-06 08:09:29 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:09:29 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in <listcomp>
+2025-07-06 08:09:29 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:09:29 [ERROR]   File "/usr/lib/python3.10/pathlib.py", line 1017, in iterdir
+2025-07-06 08:09:29 [ERROR] for name in self._accessor.listdir(self):
+2025-07-06 08:09:29 [ERROR] FileNotFoundError
+2025-07-06 08:09:29 [ERROR] :
+2025-07-06 08:09:29 [ERROR] [Errno 2] No such file or directory: 'classify_entity/training/run_7/models'
+2025-07-06 08:10:54 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 08:10:54 [INFO] run_6
+2025-07-06 08:10:54 [INFO] 2
+2025-07-06 08:10:54 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 8
+2025-07-06 08:10:54 [INFO] [GROUP_ITER] Running Iteration 7
+2025-07-06 08:10:54 [INFO] [RUN_ITERATION] Started Iteration run_7
+2025-07-06 08:10:54 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 08:10:58 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 0.06 min
+2025-07-06 08:10:58 [INFO] [RUN_TRAINING] Started
+2025-07-06 08:11:02 [INFO] [RUN_TRAINING] Finished | Time Taken: 0.06 min
+2025-07-06 08:11:02 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 08:11:02 [ERROR] Traceback (most recent call last):
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 176, in <module>
+2025-07-06 08:11:02 [ERROR] _run_group_iterations(
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 143, in _run_group_iterations
+2025-07-06 08:11:02 [ERROR] _run_iteration(project_name, trajectory_name, training_name,
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 110, in _run_iteration
+2025-07-06 08:11:02 [ERROR] _run_eval_training(project_name, training_name, trajectory_name, dataset, topk)
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/run_iteration.py", line 91, in _run_eval_training
+2025-07-06 08:11:02 [ERROR] evaluate_training(project_name, training_name, dataset=dataset, topk=topk)
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/evaluate_training.py", line 11, in evaluate_training
+2025-07-06 08:11:02 [ERROR] model_name_list = get_all_file_names(folder_path)
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in get_all_file_names
+2025-07-06 08:11:02 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:11:02 [ERROR]   File "/lambda/nfs/rlhf/ddp_rlhf_classify/scripts/utils.py", line 80, in <listcomp>
+2025-07-06 08:11:02 [ERROR] return [f.name for f in folder.iterdir() if f.is_file()]
+2025-07-06 08:11:02 [ERROR]   File "/usr/lib/python3.10/pathlib.py", line 1017, in iterdir
+2025-07-06 08:11:02 [ERROR] for name in self._accessor.listdir(self):
+2025-07-06 08:11:02 [ERROR] FileNotFoundError
+2025-07-06 08:11:02 [ERROR] :
+2025-07-06 08:11:02 [ERROR] [Errno 2] No such file or directory: 'classify_entity/training/run_7/models'
+2025-07-06 10:34:09 [INFO] [LOG FILE] initialised at classify_entity/logs/global.log
+2025-07-06 10:34:09 [INFO] run_6
+2025-07-06 10:34:09 [INFO] 2
+2025-07-06 10:34:09 [INFO] [RUN_GP_ITERATION] Running Group Iteration classify_entity from Iteration 7 to 8
+2025-07-06 10:34:09 [INFO] [GROUP_ITER] Running Iteration 7
+2025-07-06 10:34:09 [INFO] [RUN_ITERATION] Started Iteration run_7
+2025-07-06 10:34:09 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 11:03:29 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 29.32 min
+2025-07-06 11:03:29 [INFO] [RUN_TRAINING] Started
+2025-07-06 11:16:57 [INFO] [RUN_TRAINING] Finished | Time Taken: 13.48 min
+2025-07-06 11:16:57 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 11:16:57 [INFO] 
+2025-07-06 11:16:57 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_7 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 11:18:11 [INFO] 
+2025-07-06 11:18:11 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_7 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 11:19:09 [INFO] 
+2025-07-06 11:19:09 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_7 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 11:20:11 [INFO] 
+2025-07-06 11:20:11 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_7 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 11:21:09 [INFO] 
+2025-07-06 11:21:09 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_7 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 11:22:02 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 5.07 min
+2025-07-06 11:22:02 [INFO] [RUN_ITERATION] Finished Iteration run_7 | Time Taken: 47.87 min
+2025-07-06 11:22:02 [INFO] [GROUP_ITER] Running Iteration 8
+2025-07-06 11:22:02 [INFO] [RUN_ITERATION] Started Iteration run_8
+2025-07-06 11:22:02 [INFO] [RUN_TRAJECTORY] Started
+2025-07-06 11:53:46 [INFO] [RUN_TRAJECTORY] Finished | Time Taken: 31.74 min
+2025-07-06 11:53:46 [INFO] [RUN_TRAINING] Started
+2025-07-06 12:07:20 [INFO] [RUN_TRAINING] Finished | Time Taken: 13.56 min
+2025-07-06 12:07:20 [INFO] [RUN_EVAL] Started on cv
+2025-07-06 12:07:20 [INFO] 
+2025-07-06 12:07:20 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_8 --dataset cv --topk 1 --model_epoch 1
+2025-07-06 12:08:23 [INFO] 
+2025-07-06 12:08:23 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_8 --dataset cv --topk 1 --model_epoch 2
+2025-07-06 12:09:26 [INFO] 
+2025-07-06 12:09:26 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_8 --dataset cv --topk 1 --model_epoch 3
+2025-07-06 12:10:24 [INFO] 
+2025-07-06 12:10:24 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_8 --dataset cv --topk 1 --model_epoch 4
+2025-07-06 12:11:27 [INFO] 
+2025-07-06 12:11:27 [INFO] 🔧 Running command: torchrun --nproc_per_node=8 scripts/evaluate_model.py --project_name classify_entity --training_name run_8 --dataset cv --topk 1 --model_epoch 5
+2025-07-06 12:12:20 [INFO] [RUN_EVAL] Finished on cv | Time Taken: 5.00 min
+2025-07-06 12:12:20 [INFO] [RUN_ITERATION] Finished Iteration run_8 | Time Taken: 50.30 min
+2025-07-06 12:12:20 [INFO] [RUN_GP_ITERATION] Finished up to Iteration run_8 | Time Taken: 98.17 min

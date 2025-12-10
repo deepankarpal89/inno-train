@@ -1,10 +1,11 @@
+from numpy.testing import print_assert_equal
 import yaml
 from pathlib import Path
 import os
 from dotenv import load_dotenv
 from scripts.storage_client import StorageClient
 import tempfile
-
+import logging
 load_dotenv()
 
 
@@ -18,8 +19,12 @@ def read_yaml(file_path: str):
 
 
 class ProjectYamlBuilder:
-    def __init__(self) -> None:
+    def __init__(self,logger=None) -> None:
         self.yaml_data = {}
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger(__name__)
 
     def _add_project(self, data):
         if not data or "project" not in data or not data["project"]:
@@ -89,7 +94,7 @@ class ProjectYamlBuilder:
 
     def _add_trajectory(self):
         self.yaml_data["trajectory_name"] = "run_1"
-        self.yaml_data["trajectory_count"] = 10
+        self.yaml_data["trajectory_count"] = 2
 
     def _add_train_params(self):
         self.yaml_data["start_iteration"] = 1
@@ -97,7 +102,7 @@ class ProjectYamlBuilder:
         self.yaml_data["save_every_epoch"] = 1
         self.yaml_data["accumulation_steps"] = 1
         self.yaml_data["no_epochs"] = 1
-        self.yaml_data["no_iterations"] = 5
+        self.yaml_data["no_iterations"] = 2
         self.yaml_data["loss"] = "gspo"
         self.yaml_data["model_epoch"] = 1
 
@@ -166,11 +171,11 @@ class ProjectYamlBuilder:
                 )
 
                 if success:
-                    print(
+                    self.logger.info(
                         f"Successfully uploaded YAML to {os.getenv('STORAGE_TYPE')}: {bucket_name}/{object_name}"
                     )
                 else:
-                    print(f"Failed to upload YAML to {os.getenv('STORAGE_TYPE')}")
+                    self.logger.info(f"Failed to upload YAML to {os.getenv('STORAGE_TYPE')}")
 
                 return success
 
@@ -179,10 +184,10 @@ class ProjectYamlBuilder:
                 try:
                     os.unlink(temp_file_path)
                 except Exception as e:
-                    print(f"Warning: Failed to delete temporary file: {e}")
+                    self.logger.info(f"Warning: Failed to delete temporary file: {e}")
 
         except Exception as e:
-            print(f"Error saving YAML to {os.getenv('STORAGE_TYPE')}: {e}")
+            self.logger.info(f"Error saving YAML to {os.getenv('STORAGE_TYPE')}: {e}")
             return False
 
 
