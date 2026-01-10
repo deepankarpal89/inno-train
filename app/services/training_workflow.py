@@ -11,7 +11,7 @@ from app.database import async_session_maker
 from scripts.lambda_client import LambdaClient
 from scripts.project_yaml_builder import ProjectYamlBuilder
 from scripts.s3_to_server_transfer import S3ToServerTransfer
-from scripts.utils import ist_now
+from scripts.utils import ist_now, calculate_duration
 from scripts.ssh_executor import SshExecutor
 from app.services.training_job_monitor import TrainingJobMonitor
 from models.training_job import TrainingJob, TrainingJobStatus
@@ -251,6 +251,9 @@ class TrainingWorkflow:
                 await self._cleanup_resources()
                 self.job.completed_at = ist_now()
 
+                # Calculate time_taken using the helper method
+                self._update_job_time_taken()
+
                 # Update with SQLAlchemy
                 async with async_session_maker() as session:
                     session.add(self.job)
@@ -260,6 +263,7 @@ class TrainingWorkflow:
                 if "e" in locals():
                     raise e from cleanup_error
                 raise
+
     async def cancel_training(self) -> dict:
         """Cancel a running training job.
 
@@ -286,40 +290,54 @@ class TrainingWorkflow:
             instance_id = None
             if self.job.machine_config:
                 instance_id = self.job.machine_config.get("instance_id")
-            
+
             # If no instance, just update status
             if not instance_id:
-                self.logger.info(f"No instance found for job {self.job_uuid}, skipping cleanup")
-                
+                self.logger.info(
+                    f"No instance found for job {self.job_uuid}, skipping cleanup"
+                )
+
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
                 self.job.completed_at = ist_now()
-                
+
+                # Calculate time_taken
+                self._update_job_time_taken()
+
                 # Update with SQLAlchemy
                 async with async_session_maker() as session:
                     session.add(self.job)
                     await session.commit()
-                    
+
                 return {
                     "success": True,
                     "message": f"Job {self.job_uuid} cancelled (no instance to clean up)",
                     "status": self.job.status.value,
                 }
-                
+
             # Just terminate the instance if SSH isn't established yet
-            if not self.ssh_executor or not hasattr(self.ssh_executor, "is_connected") or not self.ssh_executor.is_connected():
-                self.logger.info(f"SSH not connected for job {self.job_uuid}, terminating instance directly")
+            if (
+                not self.ssh_executor
+                or not hasattr(self.ssh_executor, "is_connected")
+                or not self.ssh_executor.is_connected()
+            ):
+                self.logger.info(
+                    f"SSH not connected for job {self.job_uuid}, terminating instance directly"
+                )
                 await self._terminate_instance()
-                
+
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
                 self.job.completed_at = ist_now()
-                
+
+                # Calculate time_taken
+                self._update_job_time_taken()
+
                 # Update with SQLAlchemy
                 async with async_session_maker() as session:
                     session.add(self.job)
                     await session.commit()
-                    
+
                 return {
                     "success": True,
                     "message": f"Job {self.job_uuid} cancelled (instance terminated)",
@@ -333,6 +351,9 @@ class TrainingWorkflow:
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
                 self.job.completed_at = ist_now()
+
+                # Calculate time_taken
+                self._update_job_time_taken()
 
                 # Update with SQLAlchemy
                 async with async_session_maker() as session:
@@ -353,6 +374,7 @@ class TrainingWorkflow:
                 "message": f"An error occurred while cancelling the job: {str(e)}",
                 "status": self.job.status.value if self.job else "unknown",
             }
+
     # ==================== Job Initialization ====================
 
     async def _initialize_job(self, request_data: Dict[str, Any]) -> str:
@@ -632,6 +654,9 @@ class TrainingWorkflow:
             self.job.status = TrainingJobStatus.FAILED
             self.job.completed_at = ist_now()
 
+            # Calculate time_taken
+            self._update_job_time_taken()
+
             # Update with SQLAlchemy
             async with async_session_maker() as session:
                 session.add(self.job)
@@ -653,7 +678,9 @@ class TrainingWorkflow:
                 self.logger.error(f"Failed to download outputs during cleanup: {e}")
                 # Continue with cleanup even if download fails
         else:
-            self.logger.info("Skipping output download - SSH connection not established")
+            self.logger.info(
+                "Skipping output download - SSH connection not established"
+            )
         # Cleanup SSH connection
         await self.close_ssh_connection()
         # Cleanup GPU instance
@@ -712,6 +739,15 @@ class TrainingWorkflow:
     def _parse_request_data(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """Parse nested request data structure."""
         return request_data.get("data", {}).get("request_data", request_data)
+
+    def _update_job_time_taken(self) -> None:
+        """Calculate and update time_taken field based on created_at and completed_at."""
+        if self.job and self.job.created_at and self.job.completed_at:
+            self.job.time_taken = calculate_duration(
+                self.job.created_at, self.job.completed_at
+            )
+            if self.job.time_taken is not None:
+                self.logger.info(f"Job duration: {self.job.time_taken:.2f} seconds")
 
     def _create_logger(self) -> logging.Logger:
         """Create logger with console and file handlers."""

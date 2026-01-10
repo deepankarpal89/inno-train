@@ -192,3 +192,19 @@ class SshExecutor:
         except Exception as e:
             print(f"Failed to reconnect to SSH server {self.ip}: {str(e)}")
             return False
+
+    def is_connected(self):
+        """Check if the SSH client is connected.
+
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        if self.client is None:
+            return False
+
+        try:
+            # Try a simple command to check if connection is still active
+            transport = self.client.get_transport()
+            return transport is not None and transport.is_active()
+        except Exception:
+            return False
