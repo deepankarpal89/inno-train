@@ -1,5 +1,5 @@
 """
-Tortoise ORM models for InnoTrain database.
+SQLAlchemy models for InnoTrain database.
 Exports all models for easy import.
 """
 

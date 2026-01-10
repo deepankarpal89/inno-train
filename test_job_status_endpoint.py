@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 load_dotenv()
 # Default to port 8001 if BASE_URL is not set in .env
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8001/api")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000/api")
 
 
 def get_job_status(job_uuid: str) -> Dict[str, Any]:

@@ -21,7 +21,7 @@ class CommandResult:
 
 
 class SshExecutor:
-    def __init__(self, ip, username: str="ubuntu",reuse_conection: bool=True):
+    def __init__(self, ip, username: str = "ubuntu", reuse_conection: bool = True):
         self.ip = ip
         self.username = username
         self.timeout = 200
@@ -174,3 +174,21 @@ class SshExecutor:
             raise Exception(
                 f"Failed to download file {remote_path} to {local_path} on {self.ip}: {str(e)}"
             )
+
+    def reconnect(self):
+        """Attempt to reconnect to the remote server."""
+        try:
+            # Close existing connection if any
+            if self.client:
+                try:
+                    self.client.close()
+                except:
+                    pass  # Ignore errors on close
+                self.client = None
+
+            # Connect with the same parameters as before
+            self.connect()
+            return True
+        except Exception as e:
+            print(f"Failed to reconnect to SSH server {self.ip}: {str(e)}")
+            return False

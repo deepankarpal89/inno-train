@@ -36,11 +36,12 @@ class Settings(BaseSettings):
     ssh_key_name: str = Field(..., alias="SSH_KEY_NAME")
 
     # Database settings
+    db_type: str = Field("postgresql", alias="DB_TYPE")  # 'postgresql' or 'sqlite'
     db_name: str = Field(..., alias="DB_NAME")
-    db_user: str = Field(..., alias="DB_USER")
-    db_password: str = Field(..., alias="DB_PASSWORD")
-    db_host: str = Field(..., alias="DB_HOST")
-    db_port: Union[str, int] = Field(..., alias="DB_PORT")
+    db_user: str = Field(None, alias="DB_USER")
+    db_password: str = Field(None, alias="DB_PASSWORD")
+    db_host: str = Field(None, alias="DB_HOST")
+    db_port: Union[str, int] = Field(None, alias="DB_PORT")
 
     # Storage settings
     storage_type: str = Field(..., alias="STORAGE_TYPE")
@@ -75,8 +76,13 @@ class Settings(BaseSettings):
 
     @property
     def db_url(self) -> str:
-        """Construct the database URL."""
-        return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Construct the database URL based on database type."""
+        if self.db_type.lower() == "sqlite":
+            # For SQLite, use aiosqlite driver
+            return f"sqlite+aiosqlite:///./{self.db_name}"
+        else:
+            # For PostgreSQL, use asyncpg driver
+            return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 # Create settings instance

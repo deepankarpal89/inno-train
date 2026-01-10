@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
 import asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
+from app.database import get_session
 from app.services.training_workflow import TrainingWorkflow, JobNotFoundError
 from models.training_job import TrainingJob, TrainingJobStatus
 from models.training_iteration import TrainingIteration
@@ -13,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
 TRAINING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
 
 def setup_logger(name: str) -> logging.Logger:
     """
@@ -85,7 +89,7 @@ class CancelTrainingResponse(BaseModel):
 
 async def _run_training_job_background(
     request_data: Dict[str, Any], job_uuid: str
-    ) -> str:
+) -> str:
     """Run complete training job in background.
 
     Args:
@@ -114,7 +118,7 @@ async def _run_training_job_background(
 
 def _run_training_job_background_sync(
     request_data: Dict[str, Any], job_uuid: str
-    ) -> str:
+) -> str:
     """Run training job in a new event loop in a separate thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -138,7 +142,7 @@ async def hello_world():
 @router.post("/v1/training/start", response_model=TrainingResponse)
 async def start_training_job(
     request: TrainingRequest, background_tasks: BackgroundTasks
-    ):
+):
 
     try:
         # Initialize job record first
@@ -146,11 +150,9 @@ async def start_training_job(
         job_uuid = await workflow._initialize_job(request.model_dump())
 
         future = TRAINING_EXECUTOR.submit(
-            _run_training_job_background_sync,
-            request.model_dump(),
-            job_uuid
+            _run_training_job_background_sync, request.model_dump(), job_uuid
         )
-    
+
         # Optional: Add callback to handle completion
         future.add_done_callback(
             lambda f: logger.info(f"Job {job_uuid} completed with status {f.result()}")
@@ -170,34 +172,80 @@ async def start_training_job(
 
 
 @router.get("/v1/training/jobs/{job_uuid}", response_model=JobStatusResponse)
-async def get_job_status(job_uuid: str):
+async def get_job_status(job_uuid: str, session: AsyncSession = Depends(get_session)):
     try:
-        job = await TrainingJob.get(uuid=job_uuid)
+        # Use SQLAlchemy to query the job
+        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+        result = await session.execute(stmt)
+        job = result.scalars().first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
 
         return JobStatusResponse(
             job_uuid=str(job.uuid), status=job.status.value, success=True
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get job status: {str(e)}")
-        raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+        raise HTTPException(status_code=500, detail=str(e))
 
+@router.post(
+    "/v1/training/jobs/{job_uuid}/cancel", response_model=CancelTrainingResponse
+)
+async def cancel_training_job(
+    job_uuid: str, 
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session)
+) -> CancelTrainingResponse:
 
-@router.post("/v1/training/jobs/{job_uuid}/cancel", response_model=CancelTrainingResponse)
-async def cancel_training_job(job_uuid: str) -> CancelTrainingResponse:
-    
     try:
-        # Create workflow and cancel the job
-        workflow = await TrainingWorkflow.for_existing_job(
-            job_uuid=job_uuid, logger=logger
-        )
-        cancel_result = await workflow.cancel_training()
+        # Check if job exists first using SQLAlchemy
+        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+        result = await session.execute(stmt)
+        job = result.scalars().first()
+
+        if not job:
+            raise JobNotFoundError(f"Job {job_uuid} not found")
+            
+        # If job is already in terminal state, just return
+        if job.status in [
+            TrainingJobStatus.COMPLETED,
+            TrainingJobStatus.FAILED,
+            TrainingJobStatus.CANCELLED,
+        ]:
+            return CancelTrainingResponse(
+                success=True,
+                message=f"Job is already in terminal state: {job.status.value}",
+                job_uuid=job_uuid,
+                status=job.status.value,
+            )
+            
+        # Mark job as cancelling immediately
+        job.status = TrainingJobStatus.CANCELLED
+        session.add(job)
+        await session.commit()
+        
+        # Run actual cleanup in background
+        async def perform_cleanup():
+            try:
+                workflow = await TrainingWorkflow.for_existing_job(
+                    job_uuid=job_uuid, logger=logger
+                )
+                await workflow._cleanup_resources()
+                logger.info(f"🛑 Background cleanup completed for job {job_uuid}")
+            except Exception as e:
+                logger.error(f"Background cleanup failed for job {job_uuid}: {str(e)}")
+                
+        background_tasks.add_task(perform_cleanup)
 
         return CancelTrainingResponse(
-            success=cancel_result["success"],
-            message=cancel_result["message"],
+            success=True,
+            message=f"Job {job_uuid} cancellation initiated",
             job_uuid=job_uuid,
-            status=cancel_result["status"],
+            status="cancelling",
         )
 
     except JobNotFoundError as e:

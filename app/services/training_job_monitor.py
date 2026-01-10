@@ -8,11 +8,14 @@ import logging
 import tempfile
 import os
 import time
+import uuid
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
-from tortoise.transactions import in_transaction
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import async_session_maker
 from scripts.utils import ist_now, parse_timestamp
 from scripts.ssh_executor import SshExecutor
 from models.training_job import TrainingJob, TrainingJobStatus
@@ -20,39 +23,43 @@ from models.training_iteration import TrainingIteration, StepType
 from models.epoch_train import EpochTrain
 from models.eval import Eval
 
+
 class UpdateBatcher:
-    """Batches database updates to reduce write operations."""
+    """Batches database updates to reduce write operations using SQLAlchemy."""
+
     def __init__(self, batch_size=5, max_delay=2.0):
         self.batch_size = batch_size
         self.max_delay = max_delay
         self.batch = []
         self.last_flush = time.time()
-        
+
     async def add_update(self, obj):
         """Add an object to the batch queue."""
         self.batch.append(obj)
-        if len(self.batch) >= self.batch_size or (time.time() - self.last_flush) > self.max_delay:
+        if (
+            len(self.batch) >= self.batch_size
+            or (time.time() - self.last_flush) > self.max_delay
+        ):
             await self.flush()
-    
+
     async def flush(self):
         """Flush all pending updates to the database."""
         if not self.batch:
             return
-            
-        # Group by model type for bulk updates
-        by_type = {}
-        for obj in self.batch:
-            model_type = type(obj)
-            if model_type not in by_type:
-                by_type[model_type] = []
-            by_type[model_type].append(obj)
-        
-        # Perform bulk updates
-        for model_type, objects in by_type.items():
-            await model_type.bulk_update(objects)
-        
-        self.batch = []
-        self.last_flush = time.time()
+
+        # Use a single session for all updates
+        async with async_session_maker() as session:
+            # Add all objects to the session
+            for obj in self.batch:
+                session.add(obj)
+
+            # Commit all changes at once
+            await session.commit()
+
+            # Clear the batch
+            self.batch = []
+            self.last_flush = time.time()
+
 
 class TrainingJobMonitor:
     """
@@ -61,13 +68,13 @@ class TrainingJobMonitor:
     """
 
     def __init__(
-            self,
-            training_job_uuid: str,
-            ssh_executor: SshExecutor,
-            remote_log_path: str = "output/*/logs/global.json",
-            poll_interval: int = 5,
-            logger: logging.Logger = None,
-        ):
+        self,
+        training_job_uuid: str,
+        ssh_executor: SshExecutor,
+        remote_log_path: str = "output/*/logs/global.json",
+        poll_interval: int = 5,
+        logger: logging.Logger = None,
+    ):
         """
         Initialize the monitor.
 
@@ -111,17 +118,19 @@ class TrainingJobMonitor:
     async def _safe_db_operation(self, operation_name: str, operation_func):
         """Safely execute database operations with error handling."""
         try:
-            return await operation_func()
+            # Create a new session for the operation
+            async with async_session_maker() as session:
+                # If operation_func is callable, call it with the session
+                if callable(operation_func):
+                    return await operation_func(session)
+                # Otherwise, assume it's already an awaitable
+                else:
+                    return await operation_func
         except Exception as e:
             error_msg = str(e)
-            if "Event loop is closed" in error_msg or "different loop" in error_msg:
-                self.logger.warning(
-                    f"Database operation '{operation_name}' failed due to event loop issues: {error_msg}"
-                )
-            else:
-                self.logger.error(
-                    f"Database operation '{operation_name}' failed: {error_msg}"
-                )
+            self.logger.error(
+                f"Database operation '{operation_name}' failed: {error_msg}"
+            )
             return None
 
     def _setup_logger(self) -> logging.Logger:
@@ -180,28 +189,43 @@ class TrainingJobMonitor:
             self.logger.error(f"Error calculating duration: {e}")
             return 0.0
 
-    async def _load_training_job(self):
-        return await TrainingJob.filter(uuid=self.training_job_uuid).first()
+    async def _load_training_job(self, session: AsyncSession):
+        """Load a training job by UUID using SQLAlchemy."""
+        stmt = select(TrainingJob).where(TrainingJob.uuid == self.training_job_uuid)
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    async def _run_db_operation(self, operation_func):
+        """Run a database operation with a new session."""
+        async with async_session_maker() as session:
+            if callable(operation_func):
+                return await operation_func(session)
+            else:
+                return await operation_func
 
     async def start_monitoring(self):
         """Start monitoring the global.json file."""
         self.logger.info(f"🔍 Starting monitoring for job {self.training_job_uuid}")
-        self.job = await self._load_training_job() 
-        # Load the TrainingJob instance for foreign key relationships
+
         try:
-            # Use run_in_executor to run in main thread's event loop
-            loop = asyncio.get_running_loop()
-            self.training_job = await loop.run_in_executor(
-                None,
-                lambda: asyncio.run(self._load_training_job())
-            )
-            self.logger.info(f"✅ Loaded training job: {self.training_job.project_id}")
+            # Load training job using SQLAlchemy
+            async with async_session_maker() as session:
+                self.training_job = await self._load_training_job(session)
+                if not self.training_job:
+                    self.logger.error(
+                        f"❌ Training job {self.training_job_uuid} not found"
+                    )
+                    return
+
+                self.logger.info(
+                    f"✅ Loaded training job: {self.training_job.project_id}"
+                )
         except Exception as e:
             self.logger.error(
                 f"❌ Failed to load training job {self.training_job_uuid}: {e}"
             )
             return
-        
+
         try:
             while not self.should_stop:
                 try:
@@ -217,7 +241,9 @@ class TrainingJobMonitor:
                     try:
                         await asyncio.sleep(self.poll_interval)
                     except asyncio.CancelledError:
-                        self.logger.info(f"Monitoring cancelled during error recovery for job {self.training_job_uuid}")
+                        self.logger.info(
+                            f"Monitoring cancelled during error recovery for job {self.training_job_uuid}"
+                        )
                         raise
 
         except asyncio.CancelledError:
@@ -243,6 +269,11 @@ class TrainingJobMonitor:
             log_content = await self._download_log_file()
 
             if not log_content:
+                # If we couldn't get the log file, increase the polling interval temporarily
+                # to avoid hammering the server
+                await asyncio.sleep(
+                    min(self.poll_interval * 2, 30)
+                )  # Cap at 30 seconds
                 return
 
             # Parse new lines
@@ -267,7 +298,14 @@ class TrainingJobMonitor:
         """Download the global.json file from remote server."""
         tmp_path = None
         try:
-            # First, find the actual path (resolve wildcards)
+            # First, ensure SSH connection is active
+            if not await self._ensure_ssh_connection():
+                self.logger.warning(
+                    "Cannot download log file: SSH connection unavailable"
+                )
+                return None
+
+            # Find the actual path (resolve wildcards)
             result = self.ssh_executor.execute_command(
                 f"find . -path './{self.remote_log_path}' -type f | head -1",
                 check=False,
@@ -318,6 +356,76 @@ class TrainingJobMonitor:
                         f"Failed to cleanup temporary file {tmp_path}: {cleanup_error}"
                     )
 
+    async def _run_transaction(self, operation_func):
+        """Run a database operation within a transaction."""
+        async with async_session_maker() as session:
+            async with session.begin():
+                if callable(operation_func):
+                    return await operation_func(session)
+                else:
+                    return await operation_func
+
+    async def _ensure_ssh_connection(self):
+        """Ensure SSH connection is active, attempt to reconnect if not."""
+        try:
+            # Simple test command to check connection
+            result = self.ssh_executor.execute_command(
+                "echo 'connection_test'", check=False
+            )
+            if not result.success:
+                self.logger.warning(
+                    "SSH connection appears to be down, attempting to reconnect"
+                )
+                reconnected = self.ssh_executor.reconnect()
+                # Verify reconnection
+                if reconnected:
+                    verify = self.ssh_executor.execute_command(
+                        "echo 'connection_test'", check=False
+                    )
+                    if verify.success:
+                        self.logger.info("✅ SSH connection re-established")
+                        return True
+                    else:
+                        self.logger.error(
+                            "Failed to verify SSH connection after reconnect"
+                        )
+                        return False
+                else:
+                    self.logger.error("Failed to re-establish SSH connection")
+                    return False
+            return True
+        except Exception as e:
+            self.logger.error(f"Error checking SSH connection: {str(e)}")
+            return False
+
+    async def _process_event_in_transaction(self, event):
+        """Process an event within a transaction."""
+        phase = event.get("phase")
+
+        # Use SQLAlchemy transaction
+        async with async_session_maker() as session:
+            async with session.begin():
+                # Pass the session to each handler method
+                if phase == "PROJECT":
+                    await self._handle_project_event(event, session)
+                elif phase == "GROUP_ITERATION":
+                    await self._handle_group_iteration_event(event, session)
+                elif phase == "ITERATION":
+                    await self._handle_iteration_event(event, session)
+                elif phase == "TRAJECTORY":
+                    await self._handle_trajectory_event(event, session)
+                elif phase == "TRAINING":
+                    await self._handle_training_event(event, session)
+                elif phase == "EPOCH_TRAIN":
+                    await self._handle_epoch_train_event(event, session)
+                elif phase == "EVAL_TRAINING":
+                    await self._handle_eval_training_event(event, session)
+                elif phase == "EVAL_MODEL":
+                    await self._handle_eval_model_event(event, session)
+
+                # Flush all batched updates at the end of transaction
+                # No need to call flush explicitly as session.commit() will be called automatically
+
     async def _process_log_line(self, line: str):
         """Process a single log line and update database."""
         try:
@@ -326,47 +434,36 @@ class TrainingJobMonitor:
 
             self.logger.debug(f"Processing: {phase}")
 
-            # Route to appropriate handler within a transaction
-            async with in_transaction():
-                if phase == "PROJECT":
-                    await self._handle_project_event(event)
-                elif phase == "GROUP_ITERATION":
-                    await self._handle_group_iteration_event(event)
-                elif phase == "ITERATION":
-                    await self._handle_iteration_event(event)
-                elif phase == "TRAJECTORY":
-                    await self._handle_trajectory_event(event)
-                elif phase == "TRAINING":
-                    await self._handle_training_event(event)
-                elif phase == "EPOCH_TRAIN":
-                    await self._handle_epoch_train_event(event)
-                elif phase == "EVAL_TRAINING":
-                    await self._handle_eval_training_event(event)
-                elif phase == "EVAL_MODEL":
-                    await self._handle_eval_model_event(event)
-                
-                # Flush all batched updates at the end of transaction
-                await self.update_batcher.flush()
+            # Process the event with SQLAlchemy transaction
+            await self._process_event_in_transaction(event)
 
         except json.JSONDecodeError as e:
             self.logger.warning(f"Failed to parse log line: {line[:100]}... Error: {e}")
         except Exception as e:
             self.logger.error(f"Error processing log line: {str(e)}.. Line: {line}")
-    async def _handle_project_event(self, event: Dict[str, Any]):
+
+    async def _handle_project_event(self, event: Dict[str, Any], session: AsyncSession):
         """Handle PROJECT phase events."""
         event_type = event.get("event")
         data = event.get("data", {})
 
         if event_type == "start":
             event_timestamp = self._get_timestamp(event)
-            self.current_project = await TrainingIteration.create(
-                training_job=self.training_job,
+
+            # Create new TrainingIteration using SQLAlchemy
+            self.current_project = TrainingIteration(
+                uuid=str(uuid.uuid4()),
+                training_job_uuid=self.training_job.uuid,
                 iteration_number=1,
                 step_type=StepType.PROJECT,
                 step_config=data.get("config", {}),
                 created_at=event_timestamp,
             )
-            await self.update_batcher.add_update(self.current_project.save())
+
+            # Add to session
+            session.add(self.current_project)
+            # No need to call commit as it's handled by the transaction
+
             self.logger.info(f"📋 Project started at: {event_timestamp}")
 
         elif event_type == "end":
@@ -382,27 +479,40 @@ class TrainingJobMonitor:
                     self.current_project.created_at, self.current_project.completed_at
                 )
             self.current_project.time_taken = duration
-            await self.update_batcher.add_update(self.current_project.save())
+
+            # Add to session
+            session.add(self.current_project)
+            # No need to call commit as it's handled by the transaction
+
             self.logger.info("✅ Project completed")
 
             # Stop monitoring - training is complete
             await self.stop_monitoring()
 
-    async def _handle_group_iteration_event(self, event: Dict[str, Any]):
+    async def _handle_group_iteration_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle GROUP_ITERATION phase events."""
         event_type = event.get("event")
         if event_type == "start":
             event_timestamp = self._get_timestamp(event)
             data = event.get("data", {})
             config = data.get("config", {})
-            self.current_group_iteration = await TrainingIteration.create(
-                training_job=self.training_job,
+
+            # Create new TrainingIteration using SQLAlchemy
+            self.current_group_iteration = TrainingIteration(
+                uuid=str(uuid.uuid4()),
+                training_job_uuid=self.training_job.uuid,
                 iteration_number=config.get("no_iterations", None),
                 step_type=StepType.GROUP_ITERATION,
                 step_config=config,
                 created_at=event_timestamp,
             )
-            await self.update_batcher.add_update(self.current_group_iteration.save())
+
+            # Add to session
+            session.add(self.current_group_iteration)
+            # No need to call commit as it's handled by the transaction
+
             self.logger.info(
                 f"🔄 Group iteration started with {config.get('no_iterations')} iterations"
             )
@@ -419,10 +529,16 @@ class TrainingJobMonitor:
                     self.current_group_iteration.completed_at,
                 )
             self.current_group_iteration.time_taken = duration
-            await self.update_batcher.add_update(self.current_group_iteration.save())
+
+            # Add to session
+            session.add(self.current_group_iteration)
+            # No need to call commit as it's handled by the transaction
+
             self.logger.info("✅ Group iteration completed")
 
-    async def _handle_iteration_event(self, event: Dict[str, Any]):
+    async def _handle_iteration_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle ITERATION phase events."""
 
         event_type = event.get("event")
@@ -435,14 +551,19 @@ class TrainingJobMonitor:
             # Parse timestamp from event
             event_timestamp = self._get_timestamp(event)
 
-            # Create TrainingIteration record
-            self.current_iteration = await TrainingIteration.create(
-                training_job=self.training_job,
+            # Create TrainingIteration record with SQLAlchemy
+            self.current_iteration = TrainingIteration(
+                uuid=str(uuid.uuid4()),
+                training_job_uuid=self.training_job.uuid,
                 iteration_number=iteration_number,
                 step_type=StepType.ITERATION,
                 step_config=config,
                 created_at=event_timestamp,
             )
+
+            # Add to session
+            session.add(self.current_iteration)
+            # No need to call commit as it's handled by the transaction
 
             self.logger.info(f"🔢 Iteration {iteration_number} started")
 
@@ -463,13 +584,17 @@ class TrainingJobMonitor:
                     self.current_iteration.completed_at,
                 )
 
-            await self.update_batcher.add_update(self.current_iteration.save())
+            # Add to session
+            session.add(self.current_iteration)
+            # No need to call commit as it's handled by the transaction
 
             iteration_number = self.current_iteration_number  # Store before clearing
             self.current_iteration = None
             self.logger.info(f"✅ Iteration {iteration_number} completed")
 
-    async def _handle_trajectory_event(self, event: Dict[str, Any]):
+    async def _handle_trajectory_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle TRAJECTORY phase events."""
         event_type = event.get("event")
         data = event.get("data", {})
@@ -479,15 +604,20 @@ class TrainingJobMonitor:
             event_timestamp = self._get_timestamp(event)
             config = data.get("config", {})
 
-            # Create a trajectory generation step
+            # Create a trajectory generation step with SQLAlchemy
             if self.current_iteration:
-                self.current_trajectory = await TrainingIteration.create(
-                    training_job=self.training_job,
+                self.current_trajectory = TrainingIteration(
+                    uuid=str(uuid.uuid4()),
+                    training_job_uuid=self.training_job.uuid,
                     iteration_number=self.current_iteration_number,
                     step_type=StepType.TRAJECTORY,
                     step_config=config,
                     created_at=event_timestamp,
                 )
+
+                # Add to session
+                session.add(self.current_trajectory)
+                # No need to call commit as it's handled by the transaction
 
                 self.logger.info(
                     f"🎯 Trajectory generation started for iteration {self.current_iteration_number}"
@@ -509,12 +639,17 @@ class TrainingJobMonitor:
                     self.current_trajectory.completed_at,
                 )
             self.current_trajectory.time_taken = duration
-            await self.update_batcher.add_update(self.current_trajectory.save())
+
+            # Add to session
+            session.add(self.current_trajectory)
+            # No need to call commit as it's handled by the transaction
 
             self.current_trajectory = None
             self.logger.info(f"✅ Trajectory generation completed in {duration} min")
 
-    async def _handle_training_event(self, event: Dict[str, Any]):
+    async def _handle_training_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle TRAINING phase events for overall training iteration (start/end)."""
         event_type = event.get("event")
         data = event.get("data", {})
@@ -524,15 +659,20 @@ class TrainingJobMonitor:
             event_timestamp = self._get_timestamp(event)
             config = data.get("config", {})
 
-            # Create a training step
+            # Create a training step with SQLAlchemy
             if self.current_iteration:
-                self.current_training = await TrainingIteration.create(
-                    training_job=self.training_job,
+                self.current_training = TrainingIteration(
+                    uuid=str(uuid.uuid4()),
+                    training_job_uuid=self.training_job.uuid,
                     iteration_number=self.current_iteration_number,
                     step_type=StepType.TRAINING,
                     step_config=config,
                     created_at=event_timestamp,
                 )
+
+                # Add to session
+                session.add(self.current_training)
+                # No need to call commit as it's handled by the transaction
 
                 self.logger.info(
                     f"🏋️ Training started for iteration {self.current_iteration_number}"
@@ -553,13 +693,18 @@ class TrainingJobMonitor:
                     self.current_training.created_at, self.current_training.completed_at
                 )
             self.current_training.time_taken = duration
-            await self.update_batcher.add_update(self.current_training.save())
+
+            # Add to session
+            session.add(self.current_training)
+            # No need to call commit as it's handled by the transaction
 
             self.current_training = None
 
             self.logger.info(f"✅ Training completed in {duration} min")
 
-    async def _handle_epoch_train_event(self, event: Dict[str, Any]):
+    async def _handle_epoch_train_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle TRAINING phase epoch_complete events for individual epochs."""
         event_type = event.get("event")
 
@@ -573,12 +718,18 @@ class TrainingJobMonitor:
             data = event.get("data", {})
             epoch = data.get("epoch")
 
-            self.current_epoch_train = await EpochTrain.create(
+            # Create EpochTrain with SQLAlchemy
+            self.current_epoch_train = EpochTrain(
+                uuid=str(uuid.uuid4()),
+                iteration_uuid=self.current_training.uuid,
                 iteration_number=self.current_iteration_number,
-                iteration=self.current_training,
                 epoch_number=epoch,
                 created_at=created_at,
             )
+
+            # Add to session
+            session.add(self.current_epoch_train)
+            # No need to call commit as it's handled by the transaction
 
         elif event_type == "end":
             # Critical null check - ensure current_epoch_train exists
@@ -601,14 +752,18 @@ class TrainingJobMonitor:
             self.current_epoch_train.metrics = data.get("metrics", {})
             self.current_epoch_train.model_path = data.get("model_path", None)
             self.current_epoch_train.optimizer_path = data.get("optimizer_path", None)
-            
-            await self.update_batcher.add_update(self.current_epoch_train.save())
+
+            # Add to session
+            session.add(self.current_epoch_train)
+            # No need to call commit as it's handled by the transaction
 
             self.current_epoch_train = None
 
             self.logger.info(f"📊 Epoch {epoch} completed")
 
-    async def _handle_eval_training_event(self, event: Dict[str, Any]):
+    async def _handle_eval_training_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle EVAL_TRAINING phase events for overall evaluation iteration."""
         event_type = event.get("event")
         data = event.get("data", {})
@@ -617,15 +772,20 @@ class TrainingJobMonitor:
             event_timestamp = self._get_timestamp(event)
             config = data.get("config", {})
 
-            # Create an evaluation step
+            # Create an evaluation step with SQLAlchemy
             if self.current_iteration:
-                self.current_evaluation = await TrainingIteration.create(
-                    training_job=self.training_job,
+                self.current_evaluation = TrainingIteration(
+                    uuid=str(uuid.uuid4()),
+                    training_job_uuid=self.training_job.uuid,
                     iteration_number=self.current_iteration_number,
                     step_type=StepType.EVALUATION,
                     step_config=config,
                     created_at=event_timestamp,
                 )
+
+                # Add to session
+                session.add(self.current_evaluation)
+                # No need to call commit as it's handled by the transaction
 
                 self.logger.info(
                     f"📈 Evaluation started for iteration {self.current_iteration_number}"
@@ -647,7 +807,10 @@ class TrainingJobMonitor:
                     self.current_evaluation.completed_at,
                 )
             self.current_evaluation.time_taken = float(duration)
-            await self.update_batcher.add_update(self.current_evaluation.save())
+
+            # Add to session
+            session.add(self.current_evaluation)
+            # No need to call commit as it's handled by the transaction
 
             self.current_evaluation = None
 
@@ -660,11 +823,16 @@ class TrainingJobMonitor:
                 return
 
             self.current_evaluation.metrics = data.get("metrics", {})
-            await self.update_batcher.add_update(self.current_evaluation.save())
+
+            # Add to session
+            session.add(self.current_evaluation)
+            # No need to call commit as it's handled by the transaction
 
             self.logger.info(f"📊 Evaluation metrics updated")
 
-    async def _handle_eval_model_event(self, event: Dict[str, Any]):
+    async def _handle_eval_model_event(
+        self, event: Dict[str, Any], session: AsyncSession
+    ):
         """Handle EVAL_MODEL phase events for specific epoch model evaluation."""
         event_type = event.get("event")
         data = event.get("data", {})
@@ -684,19 +852,24 @@ class TrainingJobMonitor:
             dataset = config.get("dataset", "cv")
             training_name = config.get("training_name", "")
 
-            # Create Eval record with initial data
-            self.current_eval_model = await Eval.create(
+            # Create Eval record with SQLAlchemy
+            self.current_eval_model = Eval(
+                uuid=str(uuid.uuid4()),
                 model_id=f"iteration_{self.current_iteration_number}_epoch_{model_epoch}",
                 dataset=dataset,
                 config=config,
                 created_at=event_timestamp,
-                metadata={
+                eval_metadata={
                     "model_path": model_path,
                     "training_name": training_name,
                     "model_epoch": model_epoch,
                 },
-                iteration=self.current_evaluation,
+                iteration_uuid=self.current_evaluation.uuid,
             )
+
+            # Add to session
+            session.add(self.current_eval_model)
+            # No need to call commit as it's handled by the transaction
 
             self.logger.info(
                 f"🔍 Model evaluation started for {dataset}_epoch_{model_epoch}"
@@ -710,7 +883,10 @@ class TrainingJobMonitor:
             if self.current_eval_model:
                 self.current_eval_model.metrics = metrics
                 self.current_eval_model.eval_data_path = metrics_json_path
-                await self.update_batcher.add_update(self.current_eval_model.save())
+
+                # Add to session
+                session.add(self.current_eval_model)
+                # No need to call commit as it's handled by the transaction
 
                 self.logger.info(f"📊 Evaluation metrics recorded: {metrics}")
             else:
@@ -730,7 +906,9 @@ class TrainingJobMonitor:
                     )
                 self.current_eval_model.time_taken = float(duration)
 
-                await self.update_batcher.add_update(self.current_eval_model.save())
+                # Add to session
+                session.add(self.current_eval_model)
+                # No need to call commit as it's handled by the transaction
 
                 self.logger.info(f"✅ Model evaluation completed")
 
@@ -742,16 +920,25 @@ class TrainingJobMonitor:
     async def _mark_job_failed(self, error_message: str):
         """Mark the job as failed."""
 
-        async def mark_failed():
-            job = await TrainingJob.get(uuid=self.training_job_uuid)
-            job.status = TrainingJobStatus.FAILED
-            job.completed_at = ist_now()
-            # Store error in metadata
-            if job.metadata is None:
-                job.metadata = {}
-            job.metadata["error"] = error_message
-            await self.update_batcher.add_update(job.save())
-            return job
+        async def mark_failed(session: AsyncSession):
+            # Get job with SQLAlchemy
+            stmt = select(TrainingJob).where(TrainingJob.uuid == self.training_job_uuid)
+            result = await session.execute(stmt)
+            job = result.scalars().first()
+
+            if job:
+                job.status = TrainingJobStatus.FAILED
+                job.completed_at = ist_now()
+                # Store error in job_metadata
+                if job.job_metadata is None:
+                    job.job_metadata = {}
+                job.job_metadata["error"] = error_message
+
+                # Add to session
+                session.add(job)
+                # Commit is handled by the transaction
+                return job
+            return None
 
         result = await self._safe_db_operation("mark_job_failed", mark_failed)
         if result:

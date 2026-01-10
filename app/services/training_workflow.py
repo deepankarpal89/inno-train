@@ -7,7 +7,7 @@ import uuid
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 from dotenv import load_dotenv
-
+from app.database import async_session_maker
 from scripts.lambda_client import LambdaClient
 from scripts.project_yaml_builder import ProjectYamlBuilder
 from scripts.s3_to_server_transfer import S3ToServerTransfer
@@ -17,6 +17,8 @@ from app.services.training_job_monitor import TrainingJobMonitor
 from models.training_job import TrainingJob, TrainingJobStatus
 from concurrent.futures import ThreadPoolExecutor
 from scripts.file_logger import get_file_logger
+from app.services.db_service import db_service
+
 
 class WorkflowError(Exception):
     """Base exception for workflow errors."""
@@ -104,10 +106,10 @@ class TrainingWorkflow:
         job_uuid: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
         job: Optional[TrainingJob] = None,
-        ):
+    ):
         """Private constructor. Use create() or create_with_job() factory methods instead."""
         load_dotenv()
-        #self.logger = logger or self._create_logger()
+        # self.logger = logger or self._create_logger()
         if job_uuid:
             self.logger = get_file_logger(f"workflow_{job_uuid}")
         else:
@@ -116,7 +118,9 @@ class TrainingWorkflow:
         # Core services (always available)
         self.gpu_client = LambdaClient()
         self.file_transfer = S3ToServerTransfer(logger=self.logger)
-        self.executor = ThreadPoolExecutor(max_workers=WorkflowConstants.TRANSER_THREAD_COUNT)
+        self.executor = ThreadPoolExecutor(
+            max_workers=WorkflowConstants.TRANSER_THREAD_COUNT
+        )
 
         # Job-specific state (reset for each job)
         self._reset_job_state()
@@ -131,14 +135,29 @@ class TrainingWorkflow:
                 self.state.instance_ip = job.machine_config.get("instance_ip", None)
             if job.training_request:
                 self.data = self._parse_request_data(job.training_request)
-        
+
+    @staticmethod
+    async def get_job(job_uuid, session=None):
+        """Get a job by UUID using SQLAlchemy."""
+        from sqlalchemy import select
+        from app.database import async_session_maker
+
+        if session is None:
+            async with async_session_maker() as session:
+                stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+                result = await session.execute(stmt)
+                return result.scalars().first()
+        else:
+            stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+            result = await session.execute(stmt)
+            return result.scalars().first()
 
     @classmethod
     async def for_existing_job(
         cls, job_uuid: str, logger: Optional[logging.Logger] = None
-        ):
+    ):
         """Create workflow from an existing job in the database."""
-        job = await TrainingJob.get(uuid=job_uuid)
+        job = await cls.get_job(job_uuid)
         if not job:
             raise JobNotFoundError(f"Job not found: {job_uuid}")
         return cls(job_uuid=job_uuid, logger=logger, job=job)
@@ -213,7 +232,12 @@ class TrainingWorkflow:
             await self._execute_training_with_monitoring()
 
             self.job.status = TrainingJobStatus.COMPLETED
-            self.job.save(update_fields=["status"])
+
+            # Update with SQLAlchemy
+            async with async_session_maker() as session:
+                session.add(self.job)
+                await session.commit()
+
             self.logger.info(f"✅ Training job {self.job_uuid} completed successfully")
             return self.job_uuid
 
@@ -226,13 +250,16 @@ class TrainingWorkflow:
                 # Always cleanup resources
                 await self._cleanup_resources()
                 self.job.completed_at = ist_now()
-                await self.job.save(update_fields=["completed_at"])
+
+                # Update with SQLAlchemy
+                async with async_session_maker() as session:
+                    session.add(self.job)
+                    await session.commit()
             except Exception as cleanup_error:
                 self.logger.error(f"Failed to cleanup resources: {str(cleanup_error)}")
                 if "e" in locals():
                     raise e from cleanup_error
                 raise
-
     async def cancel_training(self) -> dict:
         """Cancel a running training job.
 
@@ -255,20 +282,69 @@ class TrainingWorkflow:
                     "status": self.job.status.value,
                 }
 
-            # Otherwise, attempt to cancel the job
-            await self._cleanup_resources()
+            # Check if instance exists and in what state
+            instance_id = None
+            if self.job.machine_config:
+                instance_id = self.job.machine_config.get("instance_id")
+            
+            # If no instance, just update status
+            if not instance_id:
+                self.logger.info(f"No instance found for job {self.job_uuid}, skipping cleanup")
+                
+                # Update status
+                self.job.status = TrainingJobStatus.CANCELLED
+                self.job.completed_at = ist_now()
+                
+                # Update with SQLAlchemy
+                async with async_session_maker() as session:
+                    session.add(self.job)
+                    await session.commit()
+                    
+                return {
+                    "success": True,
+                    "message": f"Job {self.job_uuid} cancelled (no instance to clean up)",
+                    "status": self.job.status.value,
+                }
+                
+            # Just terminate the instance if SSH isn't established yet
+            if not self.ssh_executor or not hasattr(self.ssh_executor, "is_connected") or not self.ssh_executor.is_connected():
+                self.logger.info(f"SSH not connected for job {self.job_uuid}, terminating instance directly")
+                await self._terminate_instance()
+                
+                # Update status
+                self.job.status = TrainingJobStatus.CANCELLED
+                self.job.completed_at = ist_now()
+                
+                # Update with SQLAlchemy
+                async with async_session_maker() as session:
+                    session.add(self.job)
+                    await session.commit()
+                    
+                return {
+                    "success": True,
+                    "message": f"Job {self.job_uuid} cancelled (instance terminated)",
+                    "status": self.job.status.value,
+                }
+            else:
+                # Full cleanup for running instances with SSH connection
+                self.logger.info(f"Performing full cleanup for job {self.job_uuid}")
+                await self._cleanup_resources()
 
-            # Update status
-            self.job.status = TrainingJobStatus.CANCELLED
-            self.job.completed_at = ist_now()
-            await self.job.save()
+                # Update status
+                self.job.status = TrainingJobStatus.CANCELLED
+                self.job.completed_at = ist_now()
 
-            self.logger.info(f"🛑 Cancelled job {self.job_uuid}")
-            return {
-                "success": True,
-                "message": f"Training job {self.job_uuid} cancelled successfully",
-                "status": self.job.status.value,
-            }
+                # Update with SQLAlchemy
+                async with async_session_maker() as session:
+                    session.add(self.job)
+                    await session.commit()
+
+                self.logger.info(f"🛑 Cancelled job {self.job_uuid}")
+                return {
+                    "success": True,
+                    "message": f"Training job {self.job_uuid} cancelled successfully",
+                    "status": self.job.status.value,
+                }
 
         except Exception as e:
             self.logger.error(f"Failed to cancel job: {str(e)}")
@@ -277,7 +353,6 @@ class TrainingWorkflow:
                 "message": f"An error occurred while cancelling the job: {str(e)}",
                 "status": self.job.status.value if self.job else "unknown",
             }
-
     # ==================== Job Initialization ====================
 
     async def _initialize_job(self, request_data: Dict[str, Any]) -> str:
@@ -292,18 +367,29 @@ class TrainingWorkflow:
         Raises:
             Exception: If job creation fails
         """
+        from app.database import async_session_maker
+
         self.request_data = request_data
         self.data = self._parse_request_data(self.request_data)
 
-        self.job = await TrainingJob.create(
-            uuid=uuid.uuid4(),
-            project_id=self.data.get("project", {}).get("id"),
-            training_run_id=self.data.get("training_run_id"),
-            training_request=self.request_data,
-            status=TrainingJobStatus.PENDING,
-            created_at=ist_now(),
-        )
-        self.job_uuid = str(self.job.uuid)
+        job_uuid = str(uuid.uuid4())
+
+        async with async_session_maker() as session:
+            # Create new job with SQLAlchemy
+            self.job = TrainingJob(
+                uuid=job_uuid,
+                project_id=self.data.get("project", {}).get("id"),
+                training_run_id=self.data.get("training_run_id"),
+                training_request=self.request_data,
+                status=TrainingJobStatus.PENDING,
+                created_at=ist_now(),
+            )
+
+            session.add(self.job)
+            await session.commit()
+            await session.refresh(self.job)
+
+        self.job_uuid = job_uuid
 
         self.logger.info(f"📝 Created job record: {self.job_uuid}")
         return self.job_uuid
@@ -324,7 +410,11 @@ class TrainingWorkflow:
         yaml_builder = ProjectYamlBuilder()
         yaml_builder._add_data(self.data)
         self.job.project_yaml_config = yaml_builder.get_yaml_dict()
-        await self.job.save()
+
+        # Update with SQLAlchemy
+        async with async_session_maker() as session:
+            session.add(self.job)
+            await session.commit()
 
         if not yaml_builder.save_to_s3():
             raise Exception("Failed to upload YAML to S3")
@@ -360,7 +450,11 @@ class TrainingWorkflow:
                 "instance_type": gpu_config["name"],
                 "region": gpu_config["region"],
             }
-            await self.job.save()
+
+            # Update with SQLAlchemy
+            async with async_session_maker() as session:
+                session.add(self.job)
+                await session.commit()
 
             self.logger.info(f"✅ GPU instance launched: {self.state.instance_id}")
         except Exception as e:
@@ -408,7 +502,7 @@ class TrainingWorkflow:
             )
             for s3_key, path_key, description in WorkflowConstants.TRANSFER_CONFIGS
         ]
-    
+
         # Execute transfers in parallel
         await asyncio.gather(*transfer_tasks)
 
@@ -417,7 +511,7 @@ class TrainingWorkflow:
 
     async def _transfer_file(
         self, s3_bucket: str, s3_prefix: str, server_path: str, description: str
-        ) -> None:
+    ) -> None:
         """Transfer a single file from S3 to server."""
         try:
             await asyncio.to_thread(
@@ -479,7 +573,11 @@ class TrainingWorkflow:
 
             self.job.status = TrainingJobStatus.RUNNING
             self.job.started_at = ist_now()
-            await self.job.save()
+
+            # Update with SQLAlchemy
+            async with async_session_maker() as session:
+                session.add(self.job)
+                await session.commit()
             self.logger.info(
                 f"🚀 Training job {self.job_uuid} script execution started on GPU"
             )
@@ -533,7 +631,11 @@ class TrainingWorkflow:
             await self._cleanup_resources()
             self.job.status = TrainingJobStatus.FAILED
             self.job.completed_at = ist_now()
-            await self.job.save()
+
+            # Update with SQLAlchemy
+            async with async_session_maker() as session:
+                session.add(self.job)
+                await session.commit()
 
         except Exception as e:
             self.logger.error(f"Failed to mark job as failed: {str(e)}")
@@ -541,19 +643,21 @@ class TrainingWorkflow:
     async def _cleanup_resources(self) -> None:
         """Cleanup all resources including SSH connections and GPU instances."""
         self.logger.info("🧹 Starting resource cleanup")
-
         # Stop monitoring
         await self._stop_monitoring()
-
-        # Download outputs
-        await self._download_outputs()
-
+        # Only attempt to download outputs if SSH connection exists
+        if self.ssh_executor and self.ssh_executor.is_connected():
+            try:
+                await self._download_outputs()
+            except Exception as e:
+                self.logger.error(f"Failed to download outputs during cleanup: {e}")
+                # Continue with cleanup even if download fails
+        else:
+            self.logger.info("Skipping output download - SSH connection not established")
         # Cleanup SSH connection
         await self.close_ssh_connection()
-
         # Cleanup GPU instance
         await self._terminate_instance()
-
         self.logger.info("✅ Resource cleanup completed")
 
     @property
@@ -562,13 +666,13 @@ class TrainingWorkflow:
         if not s3_bucket:
             raise ValueError("No S3 bucket configured")
         return s3_bucket
-    
+
     @property
     def job_s3_path(self):
         if not self.job.project_id and self.job.training_run_id:
             raise ValueError("No project_id or training_run_id configured")
         return f"media/projects/{self.job.project_id}/{self.job.training_run_id}"
-    
+
     @property
     def log_file_path(self):
         return f"logs/workflow_{self.job_uuid}.log"

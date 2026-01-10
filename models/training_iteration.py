@@ -2,14 +2,17 @@
 TrainingIteration model - Individual iterations within a training job
 """
 
-from enum import Enum
-from tortoise import fields
-from tortoise.models import Model
+import uuid
+import enum
+from sqlalchemy import Column, String, Float, JSON, Enum, ForeignKey, Integer, Index
+from sqlalchemy.orm import relationship
+from app.database import Base
 
 
-class StepType(str, Enum):
+class StepType(enum.Enum):
     """Step type enum for TrainingIteration"""
-    PROJECT = 'project'
+
+    PROJECT = "project"
     TRAJECTORY = "trajectory"
     TRAINING = "training"
     EVALUATION = "evaluation"
@@ -17,35 +20,42 @@ class StepType(str, Enum):
     GROUP_ITERATION = "group_iteration"
 
 
-class TrainingIteration(Model):
+class TrainingIteration(Base):
     """
     Training Iteration Table - Individual iterations within a training job
     """
 
-    uuid = fields.UUIDField(pk=True)
-    created_at = fields.CharField(
-        max_length=32, null=True
-    )  # IST timestamp as ISO string
-    completed_at = fields.CharField(
-        max_length=32, null=True
-    )  # IST timestamp as ISO string
-    # Time taken in minutes (2 decimal places)
-    time_taken = fields.FloatField(null=True)
+    __tablename__ = "training_iteration"
+
+    uuid = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(String(32), nullable=True)  # IST timestamp as ISO string
+    completed_at = Column(String(32), nullable=True)  # IST timestamp as ISO string
+    time_taken = Column(
+        Float, nullable=True
+    )  # Time taken in minutes (2 decimal places)
 
     # Foreign key to TrainingJob
-    training_job = fields.ForeignKeyField("models.TrainingJob", related_name="iterations", on_delete=fields.CASCADE)
+    training_job_uuid = Column(String, ForeignKey("training_job.uuid"), nullable=False)
+    training_job = relationship("TrainingJob", back_populates="iterations")
 
-    iteration_number = fields.IntField()
-    step_type = fields.CharEnumField(StepType, default=StepType.ITERATION)
-    step_config = fields.JSONField(null=True)  # Configuration for this step
-    metadata = fields.JSONField(null=True)  # Additional metadata
+    iteration_number = Column(Integer, nullable=False)
+    step_type = Column(Enum(StepType), default=StepType.ITERATION)
+    step_config = Column(JSON, nullable=True)  # Configuration for this step
+    iteration_metadata = Column(
+        JSON, nullable=True
+    )  # Additional metadata - renamed from 'metadata'
 
-    # Reverse relation to epochs
-    epochs: fields.ReverseRelation["EpochTrain"]
-
-    class Meta:
-        table = "training_iteration"
-        indexes = [("training_job", "iteration_number")]
+    # Relationships
+    epochs = relationship("EpochTrain", back_populates="iteration")
+    evals = relationship("Eval", back_populates="iteration")
 
     def __str__(self):
         return f"Iteration({self.iteration_number})"
+
+
+# Create indexes
+Index(
+    "idx_training_iteration_job_num",
+    TrainingIteration.training_job_uuid,
+    TrainingIteration.iteration_number,
+)

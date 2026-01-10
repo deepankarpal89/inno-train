@@ -2,41 +2,42 @@
 Eval model - Evaluation results for models
 """
 
-from tortoise import fields
-from tortoise.models import Model
+import uuid
+from sqlalchemy import Column, String, Float, JSON, ForeignKey, Integer, Index
+from sqlalchemy.orm import relationship
+from app.database import Base
 
 
-class Eval(Model):
+class Eval(Base):
     """
     Eval Table - Evaluation results for models
     """
 
-    uuid = fields.UUIDField(pk=True)
-    created_at = fields.CharField(
-        max_length=32, null=True
-    )  # IST timestamp as ISO string
-    completed_at = fields.CharField(
-        max_length=32, null=True
-    )  # IST timestamp as ISO string
-    time_taken = fields.FloatField(null=True)  # Time in minutes (2 decimal places)
-    iteration = fields.ForeignKeyField(
-        "models.TrainingIteration", related_name="evals", on_delete=fields.CASCADE
+    __tablename__ = "eval"
+
+    uuid = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(String(32), nullable=True)  # IST timestamp as ISO string
+    completed_at = Column(String(32), nullable=True)  # IST timestamp as ISO string
+    time_taken = Column(Float, nullable=True)  # Time in minutes (2 decimal places)
+
+    # Foreign key to TrainingIteration
+    iteration_uuid = Column(
+        String, ForeignKey("training_iteration.uuid"), nullable=False
     )
+    iteration = relationship("TrainingIteration", back_populates="evals")
 
-    model_id = fields.CharField(
-        max_length=255, index=True
-    )  # Reference to model being evaluated
-    dataset = fields.CharField(max_length=255)  # Dataset used for evaluation
-    config = fields.JSONField(null=True)  # Evaluation configuration
-    metrics = fields.JSONField(null=True)  # Evaluation metrics
-    eval_data_path = fields.CharField(
-        max_length=512, null=True
-    )  # Path to evaluation data
-    metadata = fields.JSONField(null=True)  # Additional metadata
-
-    class Meta:
-        table = "eval"
-        indexes = [("iteration", "model_id")]
+    model_id = Column(String(255), index=True)  # Reference to model being evaluated
+    dataset = Column(String(255), nullable=False)  # Dataset used for evaluation
+    config = Column(JSON, nullable=True)  # Evaluation configuration
+    metrics = Column(JSON, nullable=True)  # Evaluation metrics
+    eval_data_path = Column(String(512), nullable=True)  # Path to evaluation data
+    eval_metadata = Column(
+        JSON, nullable=True
+    )  # Additional metadata - renamed from 'metadata'
 
     def __str__(self):
         return f"Eval({self.model_id})"
+
+
+# Create indexes
+Index("idx_eval_iteration_model", Eval.iteration_uuid, Eval.model_id)

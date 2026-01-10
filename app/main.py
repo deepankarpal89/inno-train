@@ -4,10 +4,11 @@ import logging
 from typing import AsyncIterator
 from dotenv import load_dotenv
 import os
+import asyncio
 
 from app.config import settings
 from app.api import api_router
-from models.database import init_db, close_db
+from app.database import init_db, close_db
 from app.api.endpoints import TRAINING_EXECUTOR
 
 # Configure logging
@@ -29,7 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shutdown
     logger.info("🛑 Shutting down InnoTrain API server")
     TRAINING_EXECUTOR.shutdown(wait=True)
-    logger.info('Clsoing ThreadPoolExecutor')
+    logger.info("Closing ThreadPoolExecutor")
     logger.info("📊 Closing database connections...")
     await close_db()
     logger.info("✅ Database connections closed")
@@ -70,6 +71,7 @@ def create_application() -> FastAPI:
 
     return app
 
+
 # Create the FastAPI application
 app = create_application()
 
@@ -79,4 +81,5 @@ if __name__ == "__main__":
     load_dotenv()
     print("Port: ", os.getenv("PORT"))
     port = int(os.getenv("PORT"))
-    uvicorn.run("app.main:app", host=settings.host, port=port, reload=True,workers=4)
+    print("Port: ", port)
+    uvicorn.run("app.main:app", host=settings.host, port=port, reload=True, workers=4)
