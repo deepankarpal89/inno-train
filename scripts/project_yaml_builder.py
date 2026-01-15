@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from scripts.storage_client import StorageClient
 import tempfile
 import logging
+from typing import Dict, Any, Optional
+
 load_dotenv()
 
 
@@ -19,12 +21,69 @@ def read_yaml(file_path: str):
 
 
 class ProjectYamlBuilder:
-    def __init__(self,logger=None) -> None:
+    def __init__(self, logger=None) -> None:
         self.yaml_data = {}
+        self.task_config = {}
+        self.default_config = {}
+        self.base_config_dir = (
+            Path(os.path.dirname(os.path.dirname(__file__))) / "config"
+        )
         if logger:
             self.logger = logger
         else:
             self.logger = logging.getLogger(__name__)
+
+        # Load default configuration
+        self._load_default_config()
+
+    def _load_default_config(self) -> None:
+        """
+        Load default configuration from default_config.yaml.
+        """
+        default_config_file = self.base_config_dir / "default_config.yaml"
+        if not default_config_file.exists():
+            self.logger.warning(f"Default config file not found: {default_config_file}")
+            return
+
+        try:
+            with open(default_config_file, "r", encoding="utf-8") as f:
+                self.default_config = yaml.safe_load(f) or {}
+        except Exception as e:
+            self.logger.error(f"Error loading default config: {e}")
+            self.default_config = {}
+
+    def _load_task_config(self, task_type: str) -> Dict[str, Any]:
+        """
+        Load task-specific configuration from YAML file.
+
+        Args:
+            task_type: Type of task (text_classification, text_extraction, etc.)
+
+        Returns:
+            Dictionary containing task-specific configuration
+        """
+        config_file = self.base_config_dir / f"{task_type}.yaml"
+        task_config = {}
+
+        if not config_file.exists():
+            self.logger.warning(f"Task config file not found: {config_file}")
+        else:
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    task_config = yaml.safe_load(f) or {}
+            except Exception as e:
+                self.logger.error(f"Error loading task config: {e}")
+
+        # Merge configurations: default config -> task-specific
+        merged_config = {}
+
+        # Add default configuration
+        merged_config.update(self.default_config)
+
+        # Add task-specific overrides
+        merged_config.update(task_config)
+
+        return merged_config
 
     def _add_project(self, data):
         if not data or "project" not in data or not data["project"]:
@@ -83,47 +142,63 @@ class ProjectYamlBuilder:
         self.yaml_data["cv_file_path"] = self.yaml_data["eval_file_path"]
 
     def _add_reward(self):
-        self.yaml_data["reward"] = "classify_text"
+        self.yaml_data["reward"] = self.task_config.get("reward", "classify_text")
+        self.yaml_data["reward_params"] = self.task_config.get("reward_params", {})
 
     def _add_ref_model(self):
-        self.yaml_data["ref_model_name"] = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+        self.yaml_data["ref_model_name"] = self.task_config.get(
+            "ref_model_name", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+        )
+        self.yaml_data["ref_model_params"] = self.task_config.get(
+            "ref_model_params", {}
+        )
 
     def _add_model(self):
-        self.yaml_data["model_name"] = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-        self.yaml_data["max_new_tokens"] = 250
+        self.yaml_data["model_name"] = self.task_config.get(
+            "model_name", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+        )
+        self.yaml_data["max_new_tokens"] = self.task_config.get("max_new_tokens", 250)
+        self.yaml_data["model_params"] = self.task_config.get("model_params", {})
 
     def _add_trajectory(self):
-        self.yaml_data["trajectory_name"] = "run_1"
-        self.yaml_data["trajectory_count"] = 2
+        self.yaml_data["trajectory_name"] = self.task_config.get("trajectory_name", "run_1")
+        self.yaml_data["trajectory_count"] = self.task_config.get("trajectory_count", 2)
+        self.yaml_data["trajectory_params"] = self.task_config.get("trajectory_params", {})
 
     def _add_train_params(self):
-        self.yaml_data["start_iteration"] = 1
-        self.yaml_data["topk"] = 1
-        self.yaml_data["save_every_epoch"] = 1
-        self.yaml_data["accumulation_steps"] = 1
-        self.yaml_data["no_epochs"] = 1
-        self.yaml_data["no_iterations"] = 2
-        self.yaml_data["loss"] = "gspo"
-        self.yaml_data["model_epoch"] = 1
+        self.yaml_data["start_iteration"] = self.task_config.get("start_iteration", 1)
+        self.yaml_data["topk"] = self.task_config.get("topk", 1)
+        self.yaml_data["save_every_epoch"] = self.task_config.get("save_every_epoch", 1)
+        self.yaml_data["accumulation_steps"] = self.task_config.get("accumulation_steps", 1)
+        self.yaml_data["no_epochs"] = self.task_config.get("no_epochs", 1)
+        self.yaml_data["no_iterations"] = self.task_config.get("no_iterations", 2)
+        self.yaml_data["loss"] = self.task_config.get("loss", "gspo")
+        self.yaml_data["model_epoch"] = self.task_config.get("model_epoch", 1)
 
     def _add_eval_params(self):
-        self.yaml_data["topk_eval"] = 1
+        self.yaml_data["topk_eval"] = self.task_config.get("topk_eval", 1)
 
-    def write_yaml(slef, data: dict, file_path: str):
+    def write_yaml(self, data: dict, file_path: str):
         """Write a dictionary to a YAML file at the given location."""
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, sort_keys=False)
-    
+
     def get_yaml_dict(self):
         return self.yaml_data
-    
+
     def _add_data(self, data):
         self._add_project(data)
         self._add_prompt(data)
         self._add_train_dataset(data)
         self._add_eval_dataset(data)
+
+        # Load task-specific configuration
+        task_type = self.yaml_data.get("project_task_type", "text_classification")
+        self.task_config = self._load_task_config(task_type)
+
+        # Add task-specific configurations
         self._add_reward()
         self._add_ref_model()
         self._add_model()
@@ -175,7 +250,9 @@ class ProjectYamlBuilder:
                         f"Successfully uploaded YAML to {os.getenv('STORAGE_TYPE')}: {bucket_name}/{object_name}"
                     )
                 else:
-                    self.logger.info(f"Failed to upload YAML to {os.getenv('STORAGE_TYPE')}")
+                    self.logger.info(
+                        f"Failed to upload YAML to {os.getenv('STORAGE_TYPE')}"
+                    )
 
                 return success
 
@@ -230,7 +307,7 @@ def main():
 
     pyb = ProjectYamlBuilder()
     pyb.create_yaml(data, "config.yaml")
-    #pyb.save_to_s3()
+    # pyb.save_to_s3()
     print(pyb.get_yaml_dict())
 
 
