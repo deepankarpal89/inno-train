@@ -668,21 +668,37 @@ class TrainingWorkflow:
     async def _cleanup_resources(self) -> None:
         """Cleanup all resources including SSH connections and GPU instances."""
         self.logger.info("🧹 Starting resource cleanup")
+
         # Stop monitoring
         await self._stop_monitoring()
-        # Only attempt to download outputs if SSH connection exists
-        if self.ssh_executor and self.ssh_executor.is_connected():
+
+        # Only attempt to download outputs if SSH connection exists and is healthy
+        if self.ssh_executor:
             try:
-                await self._download_outputs()
+                # Test SSH connection with a simple command
+                test_result = await asyncio.to_thread(
+                    self.ssh_executor.execute_command, "echo 'test'", check=False
+                )
+
+                if test_result.success:
+                    try:
+                        await self._download_outputs()
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to download outputs during cleanup: {e}"
+                        )
+                else:
+                    self.logger.info(
+                        "Skipping output download - SSH connection unhealthy"
+                    )
             except Exception as e:
-                self.logger.error(f"Failed to download outputs during cleanup: {e}")
-                # Continue with cleanup even if download fails
+                self.logger.info(f"Skipping output download - SSH error: {str(e)}")
         else:
-            self.logger.info(
-                "Skipping output download - SSH connection not established"
-            )
+            self.logger.info("Skipping output download - No SSH executor")
+
         # Cleanup SSH connection
         await self.close_ssh_connection()
+
         # Cleanup GPU instance
         await self._terminate_instance()
         self.logger.info("✅ Resource cleanup completed")
@@ -707,10 +723,24 @@ class TrainingWorkflow:
     async def close_ssh_connection(self) -> None:
         if self.ssh_executor:
             try:
-                await asyncio.to_thread(self.ssh_executor.disconnect)
-                self.logger.info("✅ SSH connection closed")
+                # Set a timeout for the disconnect operation
+                disconnect_task = asyncio.create_task(
+                    asyncio.to_thread(self.ssh_executor.disconnect)
+                )
+                try:
+                    await asyncio.wait_for(disconnect_task, timeout=5.0)
+                    self.logger.info("✅ SSH connection closed")
+                except asyncio.TimeoutError:
+                    self.logger.warning(
+                        "SSH disconnect timed out after 5s, forcing cleanup"
+                    )
+                finally:
+                    # Ensure we clear the reference even if disconnect fails
+                    self.ssh_executor = None
             except Exception as e:
                 self.logger.error(f"Error closing SSH connection: {e}")
+                # Still clear the reference
+                self.ssh_executor = None
 
     async def _terminate_instance(self) -> None:
         """Terminate the GPU instance if it exists."""
@@ -747,7 +777,7 @@ class TrainingWorkflow:
                 self.job.created_at, self.job.completed_at
             )
             if self.job.time_taken is not None:
-                self.logger.info(f"Job duration: {self.job.time_taken:.2f} seconds")
+                self.logger.info(f"Job duration: {self.job.time_taken:.2f} minutes")
 
     def _create_logger(self) -> logging.Logger:
         """Create logger with console and file handlers."""

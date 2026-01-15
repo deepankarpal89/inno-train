@@ -156,6 +156,42 @@ class TrainingJobMonitor:
         event_timestamp = parse_timestamp(event.get("timestamp"))
         return event_timestamp if event_timestamp else ist_now()
 
+    def validate_duration(
+        self, duration_value, start_time, end_time, context=""
+    ) -> float:
+        """Validate and calculate duration, falling back to timestamp calculation if invalid.
+
+        Args:
+            duration_value: Duration value from event data
+            start_time: Start timestamp (datetime or ISO string)
+            end_time: End timestamp (datetime or ISO string)
+            context: Optional context for logging (e.g., 'eval', 'training')
+
+        Returns:
+            float: Valid duration in minutes
+        """
+        try:
+            # Try to convert duration to float and validate
+            duration_float = (
+                float(duration_value) if duration_value is not None else None
+            )
+
+            # Check if duration is unreasonable (> 24 hours or negative)
+            if duration_float is None or duration_float > 24 * 60 or duration_float < 0:
+                context_msg = f" {context}" if context else ""
+                self.logger.warning(
+                    f"Invalid{context_msg} duration detected: {duration_float} min, calculating from timestamps"
+                )
+                duration_float = self.get_duration(start_time, end_time)
+        except (ValueError, TypeError):
+            context_msg = f" {context}" if context else ""
+            self.logger.warning(
+                f"Invalid{context_msg} duration format: {duration_value}, calculating from timestamps"
+            )
+            duration_float = self.get_duration(start_time, end_time)
+
+        return duration_float
+
     def get_duration(self, start_time, end_time):
         """Calculate duration in minutes between two timestamps.
 
@@ -688,11 +724,16 @@ class TrainingJobMonitor:
 
             self.current_training.completed_at = self._get_timestamp(event)
             duration = data.get("duration")
-            if not duration:
-                duration = self.get_duration(
-                    self.current_training.created_at, self.current_training.completed_at
-                )
-            self.current_training.time_taken = duration
+
+            # Validate and get duration
+            duration_float = self.validate_duration(
+                duration,
+                self.current_training.created_at,
+                self.current_training.completed_at,
+                context="training",
+            )
+
+            self.current_training.time_taken = duration_float
 
             # Add to session
             session.add(self.current_training)
@@ -700,7 +741,7 @@ class TrainingJobMonitor:
 
             self.current_training = None
 
-            self.logger.info(f"✅ Training completed in {duration} min")
+            self.logger.info(f"✅ Training completed in {duration_float:.2f} min")
 
     async def _handle_epoch_train_event(
         self, event: Dict[str, Any], session: AsyncSession
@@ -717,6 +758,16 @@ class TrainingJobMonitor:
             created_at = self._get_timestamp(event)
             data = event.get("data", {})
             epoch = data.get("epoch")
+
+            # Validate epoch number
+            try:
+                epoch = int(epoch)
+                if epoch < 1:
+                    self.logger.error(f"Invalid epoch number: {epoch}")
+                    return
+            except (ValueError, TypeError):
+                self.logger.error(f"Invalid epoch format: {epoch}")
+                return
 
             # Create EpochTrain with SQLAlchemy
             self.current_epoch_train = EpochTrain(
@@ -742,12 +793,16 @@ class TrainingJobMonitor:
             epoch = data.get("epoch", "unknown")  # Store epoch for logging
 
             duration = data.get("duration")
-            if not duration:
-                duration = self.get_duration(
-                    self.current_epoch_train.created_at,
-                    self.current_epoch_train.completed_at,
-                )
-            self.current_epoch_train.time_taken = duration
+
+            # Validate and get duration
+            duration_float = self.validate_duration(
+                duration,
+                self.current_epoch_train.created_at,
+                self.current_epoch_train.completed_at,
+                context="epoch training",
+            )
+
+            self.current_epoch_train.time_taken = duration_float
 
             self.current_epoch_train.metrics = data.get("metrics", {})
             self.current_epoch_train.model_path = data.get("model_path", None)
@@ -759,7 +814,7 @@ class TrainingJobMonitor:
 
             self.current_epoch_train = None
 
-            self.logger.info(f"📊 Epoch {epoch} completed")
+            self.logger.info(f"📊 Epoch {epoch} completed in {duration_float:.2f} min")
 
     async def _handle_eval_training_event(
         self, event: Dict[str, Any], session: AsyncSession
@@ -812,9 +867,7 @@ class TrainingJobMonitor:
             session.add(self.current_evaluation)
             # No need to call commit as it's handled by the transaction
 
-            self.current_evaluation = None
-
-            self.logger.info(f"✅ Evaluation completed in {duration} min")
+            self.logger.info(f"✅ Evaluation completed in {float(duration):.2f} min")
 
         elif event_type == "metrics":
             # Critical null check - ensure current_evaluation exists
@@ -899,12 +952,16 @@ class TrainingJobMonitor:
             if self.current_eval_model:
                 self.current_eval_model.completed_at = self._get_timestamp(event)
                 duration = data.get("duration", None)
-                if not duration:
-                    duration = self.get_duration(
-                        self.current_eval_model.created_at,
-                        self.current_eval_model.completed_at,
-                    )
-                self.current_eval_model.time_taken = float(duration)
+
+                # Validate and get duration
+                duration_float = self.validate_duration(
+                    duration,
+                    self.current_eval_model.created_at,
+                    self.current_eval_model.completed_at,
+                    context="eval model",
+                )
+
+                self.current_eval_model.time_taken = duration_float
 
                 # Add to session
                 session.add(self.current_eval_model)
