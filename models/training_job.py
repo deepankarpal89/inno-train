@@ -38,7 +38,7 @@ class TrainingJob(Base):
     training_request = Column(JSON, nullable=True)  # Training request
     machine_config = Column(JSON, nullable=True)  # Machine/GPU configuration
     status = Column(Enum(TrainingJobStatus), default=TrainingJobStatus.PENDING)
-    time_taken = Column(Float, nullable=True)  # Time taken in seconds
+    time_taken = Column(Float, nullable=True)  # Time taken in minutes
 
     # Additional metadata
     job_metadata = Column(JSON, nullable=True)  # Additional metadata

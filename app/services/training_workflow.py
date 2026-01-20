@@ -85,7 +85,7 @@ class WorkflowConstants:
     # Logging Configuration
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    TRANSER_THREAD_COUNT = 5
+    TRANSER_THREAD_COUNT = 2
 
 
 @dataclass
@@ -231,7 +231,7 @@ class TrainingWorkflow:
             # Execute training with monitoring (blocks until completion)
             await self._execute_training_with_monitoring()
 
-            self.job.status = TrainingJobStatus.COMPLETED
+            
 
             # Update with SQLAlchemy
             async with async_session_maker() as session:
@@ -250,7 +250,8 @@ class TrainingWorkflow:
                 # Always cleanup resources
                 await self._cleanup_resources()
                 self.job.completed_at = ist_now()
-
+                self.job.status = TrainingJobStatus.COMPLETED
+                
                 # Calculate time_taken using the helper method
                 self._update_job_time_taken()
 
