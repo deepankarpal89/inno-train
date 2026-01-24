@@ -163,7 +163,7 @@ async def start_training_job(request: TrainingRequest, background_tasks: Backgro
         workflow = TrainingWorkflow.for_new_job(logger=logger)
         job_uuid = await workflow._initialize_job(request.model_dump())
 
-        #future = TRAINING_EXECUTOR.submit(_run_training_job_background_sync, request.model_dump(), job_uuid)
+        future = TRAINING_EXECUTOR.submit(_run_training_job_background_sync, request.model_dump(), job_uuid)
 
         # # Optional: Add callback to handle completion
         # future.add_done_callback(
