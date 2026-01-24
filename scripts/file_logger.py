@@ -1,13 +1,13 @@
 import logging
 import json
 
-from scripts.utils import ist_now
+from scripts.utils import ist_now_isoformat
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record):
         log_record = {
-            "timestamp": ist_now(),
+            "timestamp": ist_now_isoformat(),
             "logger": record.name,
             "module": record.module,
             "level": record.levelname,
@@ -25,7 +25,7 @@ def get_file_logger(file_name):
     file_logger = logging.getLogger(file_name)
     file_logger.setLevel(logging.DEBUG)
 
-    # Remove any existing handlers to prevent duplicates
+    # Remove any existing handlers to prevent duplicates            
     if file_logger.hasHandlers():
         file_logger.handlers.clear()
 

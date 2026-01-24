@@ -124,6 +124,7 @@ class TrainingWorkflow:
 
         # Job-specific state (reset for each job)
         self._reset_job_state()
+        self._cleanup_completed = False
 
         # Set job data
         self.job_uuid = job_uuid
@@ -184,6 +185,7 @@ class TrainingWorkflow:
         self.request_data: Optional[Dict[str, Any]] = None
         self.data: Optional[Dict[str, Any]] = None
         self.job_uuid: Optional[str] = None
+        self._cleanup_completed = False
 
     # ==================== Public API ====================
 
@@ -232,6 +234,13 @@ class TrainingWorkflow:
             await self._execute_training_with_monitoring()
             
             
+            # Always cleanup resources
+            await self._cleanup_resources()
+            self.job.completed_at = ist_now().isoformat()
+            self.job.status = TrainingJobStatus.COMPLETED
+            
+            # Calculate time_taken using the helper method
+            self._update_job_time_taken()
 
             # Update with SQLAlchemy
             async with async_session_maker() as session:
@@ -247,18 +256,13 @@ class TrainingWorkflow:
             raise
         finally:
             try:
-                # Always cleanup resources
-                await self._cleanup_resources()
-                self.job.completed_at = ist_now()
-                self.job.status = TrainingJobStatus.COMPLETED
-                
-                # Calculate time_taken using the helper method
-                self._update_job_time_taken()
-
-                # Update with SQLAlchemy
-                async with async_session_maker() as session:
-                    session.add(self.job)
-                    await session.commit()
+                # Check if cleanup has already been performed
+                if not hasattr(self, '_cleanup_completed') or not self._cleanup_completed:
+                    await self._cleanup_resources()
+                    self._cleanup_completed = True
+                    self.logger.info("✅ Cleanup completed successfully")
+                else:
+                    self.logger.info("ℹ️ Cleanup already completed, skipping")
             except Exception as cleanup_error:
                 self.logger.error(f"Failed to cleanup resources: {str(cleanup_error)}")
                 if "e" in locals():
@@ -300,7 +304,7 @@ class TrainingWorkflow:
 
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
-                self.job.completed_at = ist_now()
+                self.job.completed_at = ist_now().isoformat()
 
                 # Calculate time_taken
                 self._update_job_time_taken()
@@ -329,7 +333,7 @@ class TrainingWorkflow:
 
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
-                self.job.completed_at = ist_now()
+                self.job.completed_at = ist_now().isoformat()
 
                 # Calculate time_taken
                 self._update_job_time_taken()
@@ -347,11 +351,17 @@ class TrainingWorkflow:
             else:
                 # Full cleanup for running instances with SSH connection
                 self.logger.info(f"Performing full cleanup for job {self.job_uuid}")
-                await self._cleanup_resources()
+                if not self._cleanup_completed:
+                    await self._cleanup_resources()
+                    self._cleanup_completed = True
+                    self.logger.info("✅ Cleanup completed in cancel training")
+                else:
+                    self.logger.info("ℹ️ Cleanup already completed, skipping in cancel training")
+
 
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
-                self.job.completed_at = ist_now()
+                self.job.completed_at = ist_now().isoformat()   
 
                 # Calculate time_taken
                 self._update_job_time_taken()
@@ -405,7 +415,7 @@ class TrainingWorkflow:
                 training_run_id=self.data.get("training_run_id"),
                 training_request=self.request_data,
                 status=TrainingJobStatus.PENDING,
-                created_at=ist_now(),
+                created_at=ist_now().isoformat(),
             )
 
             session.add(self.job)
@@ -595,7 +605,7 @@ class TrainingWorkflow:
             )
 
             self.job.status = TrainingJobStatus.RUNNING
-            self.job.started_at = ist_now()
+            self.job.started_at = ist_now().isoformat()
 
             # Update with SQLAlchemy
             async with async_session_maker() as session:
@@ -651,9 +661,14 @@ class TrainingWorkflow:
 
         # Mark job as failed
         try:
-            await self._cleanup_resources()
+            if not self._cleanup_completed:
+                await self._cleanup_resources()
+                self._cleanup_completed = True
+                self.logger.info("Cleanup completed successfully")
+            else:
+                self.logger.info("Cleanup already completed, skipping in failure handler")
             self.job.status = TrainingJobStatus.FAILED
-            self.job.completed_at = ist_now()
+            self.job.completed_at = ist_now().isoformat()
 
             # Calculate time_taken
             self._update_job_time_taken()
@@ -702,6 +717,7 @@ class TrainingWorkflow:
 
         # Cleanup GPU instance
         await self._terminate_instance()
+        self._cleanup_completed = True
         self.logger.info("✅ Resource cleanup completed")
 
     @property

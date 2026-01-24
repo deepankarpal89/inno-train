@@ -152,13 +152,13 @@ class TrainingJobMonitor:
 
         return logger
 
-    def _get_timestamp(self, event: Dict[str, Any]) -> datetime:
+    def _get_timestamp(self, event: Dict[str, Any]) -> str:
         event_timestamp = parse_timestamp(event.get("timestamp"))
-        return event_timestamp if event_timestamp else ist_now()
+        resp = event_timestamp.isoformat() if event_timestamp else ist_now().isoformat()
 
-    def validate_duration(
-        self, duration_value, start_time, end_time, context=""
-    ) -> float:
+        return resp
+
+    def validate_duration(self, duration_value, start_time, end_time, context="") -> float:
         """Validate and calculate duration, falling back to timestamp calculation if invalid.
 
         Args:
@@ -985,7 +985,7 @@ class TrainingJobMonitor:
 
             if job:
                 job.status = TrainingJobStatus.FAILED
-                job.completed_at = ist_now()
+                job.completed_at = ist_now().isoformat()
                 # Store error in job_metadata
                 if job.job_metadata is None:
                     job.job_metadata = {}
