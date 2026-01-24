@@ -230,7 +230,7 @@ class TrainingWorkflow:
 
             # Execute training with monitoring (blocks until completion)
             await self._execute_training_with_monitoring()
-
+            
             
 
             # Update with SQLAlchemy

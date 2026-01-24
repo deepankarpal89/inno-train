@@ -83,6 +83,7 @@ class JobStatusResponse(BaseModel):
     job_uuid: str
     status: str
     success: bool
+    completed_at: Optional[str] = None
 
 
 class CancelTrainingResponse(BaseModel):
