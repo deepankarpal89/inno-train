@@ -115,7 +115,7 @@ class AccuracyMetricsResponse(BaseModel):
     iterations: int
     train_accuracies: List[Optional[float]]
     eval_accuracies: List[Optional[float]]
-    best_epochs: List[Optional[int]]
+    metrics: Dict
     success: bool
     message: str
 
@@ -409,93 +409,116 @@ async def get_job_training_time(
         )
 
 
-# @router.get(
-#     "/v1/training/jobs/{job_uuid}/metrics/accuracy",
-#     response_model=AccuracyMetricsResponse,
-# )
-# async def get_accuracy_metrics(
-#     job_uuid: str, session: AsyncSession = Depends(get_session)
-# ):
-#     """
-#     Get accuracy metrics for each iteration.
+@router.get(
+    "/v1/training/jobs/{job_uuid}/metrics/accuracy",
+    response_model=AccuracyMetricsResponse,
+)
+async def get_accuracy_metrics(
+    job_uuid: str, session: AsyncSession = Depends(get_session)
+):
+    """
+    Get accuracy metrics for each iteration.
 
-#     For each iteration, selects the epoch with maximum eval accuracy.
-#     Results are cached in iteration metadata for fast subsequent access.
+    For each iteration, selects the epoch with maximum eval accuracy.
+    Results are cached in iteration metadata for fast subsequent access.
 
-#     Args:
-#         job_uuid: UUID of the training job
-#         session: Database session
+    Args:
+        job_uuid: UUID of the training job
+        session: Database session
 
-#     Returns:
-#         AccuracyMetricsResponse: Accuracy metrics per iteration
-#     """
-#     try:
-#         stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
-#         result = await session.execute(stmt)
-#         job = result.scalars().first()
+    Returns:
+        AccuracyMetricsResponse: Accuracy metrics per iteration
+    """
+    try:
+        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+        result = await session.execute(stmt)
+        job = result.scalars().first()
 
-#         if not job:
-#             raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
 
-#         stmt = (
-#             select(TrainingIteration)
-#             .where(
-#                 TrainingIteration.training_job_uuid == job_uuid,
-#                 TrainingIteration.step_type == StepType.ITERATION,
-#             )
-#             .order_by(TrainingIteration.iteration_number)
-#         )
+        # Check if job is completed
+        if job.status != TrainingJobStatus.COMPLETED:
+            return AccuracyMetricsResponse(
+                job_uuid=job_uuid,
+                iterations=0,
+                train_accuracies=[],
+                eval_accuracies=[],
+                metrics={},
+                success=False,
+                message=f"Job is not completed. Current status: {job.status.value}",
+            )
 
-#         result = await session.execute(stmt)
-#         iterations = result.scalars().all()
+        # Extract metrics from job_metadata column
+        job_metadata = job.job_metadata or {}
+        job_metrics = job_metadata.get("metrics", {})
 
-#         if not iterations:
-#             return AccuracyMetricsResponse(
-#                 job_uuid=job_uuid,
-#                 iterations=0,
-#                 train_accuracies=[],
-#                 eval_accuracies=[],
-#                 best_epochs=[],
-#                 success=True,
-#                 message="No iterations found for this job",
-#             )
+        if not job_metrics:
+            return AccuracyMetricsResponse(
+                job_uuid=job_uuid,
+                iterations=0,
+                train_accuracies=[],
+                eval_accuracies=[],
+                metrics={},
+                success=False,
+                message="Job has no metrics populated in metadata",
+            )
 
-#         train_accuracies = []
-#         eval_accuracies = []
-#         best_epochs = []
-#         needs_commit = False
+        metrics = {
+            "train_accuracy": job_metrics.get("best_eval_train", {}).get("accuracy"),
+            "eval_accuracy": job_metrics.get("best_eval_cv", {}).get("accuracy"),
+            "best_eval_uuid": job_metrics.get("best_eval_cv", {}).get("eval_uuid"),
+        }
 
-#         for iteration in iterations:
-#             metadata_before = iteration.iteration_metadata or {}
-#             had_best_epoch = "best_epoch" in metadata_before
+        stmt = (
+            select(TrainingIteration)
+            .where(
+                TrainingIteration.training_job_uuid == job_uuid,
+                TrainingIteration.step_type == StepType.ITERATION,
+            )
+            .order_by(TrainingIteration.iteration_number)
+        )
 
-#             best_epoch_data = await get_or_calculate_best_epoch(
-#                 job_uuid, iteration.iteration_number, session
-#             )
+        result = await session.execute(stmt)
+        iterations = result.scalars().all()
 
-#             if not had_best_epoch:
-#                 needs_commit = True
+        if not iterations:
+            return AccuracyMetricsResponse(
+                job_uuid=job_uuid,
+                iterations=0,
+                train_accuracies=[],
+                eval_accuracies=[],
+                metrics=metrics,
+                success=True,
+                message="No iterations found for this job",
+            )
 
-#             train_accuracies.append(best_epoch_data.get("train_accuracy"))
-#             eval_accuracies.append(best_epoch_data.get("eval_accuracy"))
-#             best_epochs.append(best_epoch_data.get("epoch_number"))
+        train_accuracies = []
+        eval_accuracies = []
 
-#         if needs_commit:
-#             await session.commit()
-#             logger.info(f"Calculated and cached best_epoch metadata for job {job_uuid}")
+        for iteration in iterations:
+            iteration_metadata = iteration.iteration_metadata or {}
+            iter_metrics = iteration_metadata.get("metrics", {})
 
-#         return AccuracyMetricsResponse(
-#             job_uuid=job_uuid,
-#             iterations=len(iterations),
-#             train_accuracies=train_accuracies,
-#             eval_accuracies=eval_accuracies,
-#             best_epochs=best_epochs,
-#             success=True,
-#             message="Accuracy metrics retrieved successfully",
-#         )
+            # Extract train and eval accuracies from iteration_metadata
+            train_accuracy = iter_metrics.get("best_eval_train", {}).get("accuracy")
+            eval_accuracy = iter_metrics.get("best_eval_cv", {}).get("accuracy")
 
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Failed to get accuracy metrics: {str(e)}")
-#         raise HTTPException(status_code=500, detail=str(e))
+            train_accuracies.append(train_accuracy)
+            eval_accuracies.append(eval_accuracy)
+
+        return AccuracyMetricsResponse(
+            job_uuid=job_uuid,
+            iterations=len(iterations),
+            metrics=metrics,
+            train_accuracies=train_accuracies,
+            eval_accuracies=eval_accuracies,
+            success=True,
+            message="Accuracy metrics retrieved successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get accuracy metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
