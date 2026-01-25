@@ -161,15 +161,21 @@ class ProjectYamlBuilder:
         self.yaml_data["model_params"] = self.task_config.get("model_params", {})
 
     def _add_trajectory(self):
-        self.yaml_data["trajectory_name"] = self.task_config.get("trajectory_name", "run_1")
+        self.yaml_data["trajectory_name"] = self.task_config.get(
+            "trajectory_name", "run_1"
+        )
         self.yaml_data["trajectory_count"] = self.task_config.get("trajectory_count", 2)
-        self.yaml_data["trajectory_params"] = self.task_config.get("trajectory_params", {})
+        self.yaml_data["trajectory_params"] = self.task_config.get(
+            "trajectory_params", {}
+        )
 
     def _add_train_params(self):
         self.yaml_data["start_iteration"] = self.task_config.get("start_iteration", 1)
         self.yaml_data["topk"] = self.task_config.get("topk", 1)
         self.yaml_data["save_every_epoch"] = self.task_config.get("save_every_epoch", 1)
-        self.yaml_data["accumulation_steps"] = self.task_config.get("accumulation_steps", 1)
+        self.yaml_data["accumulation_steps"] = self.task_config.get(
+            "accumulation_steps", 1
+        )
         self.yaml_data["no_epochs"] = self.task_config.get("no_epochs", 1)
         self.yaml_data["no_iterations"] = self.task_config.get("no_iterations", 2)
         self.yaml_data["loss"] = self.task_config.get("loss", "gspo")
@@ -237,7 +243,7 @@ class ProjectYamlBuilder:
 
             try:
                 # Initialize storage client and upload
-                storage = StorageClient(storage_type=os.getenv("STORAGE_TYPE"))
+                storage = StorageClient()
                 success = storage.upload_file(
                     bucket_name=bucket_name,
                     object_name=object_name,
@@ -247,12 +253,10 @@ class ProjectYamlBuilder:
 
                 if success:
                     self.logger.info(
-                        f"Successfully uploaded YAML to {os.getenv('STORAGE_TYPE')}: {bucket_name}/{object_name}"
+                        f"Successfully uploaded YAML to S3: {bucket_name}/{object_name}"
                     )
                 else:
-                    self.logger.info(
-                        f"Failed to upload YAML to {os.getenv('STORAGE_TYPE')}"
-                    )
+                    self.logger.info(f"Failed to upload YAML to S3")
 
                 return success
 
@@ -264,7 +268,7 @@ class ProjectYamlBuilder:
                     self.logger.info(f"Warning: Failed to delete temporary file: {e}")
 
         except Exception as e:
-            self.logger.info(f"Error saving YAML to {os.getenv('STORAGE_TYPE')}: {e}")
+            self.logger.info(f"Error saving YAML to S3: {e}")
             return False
 
 

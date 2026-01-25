@@ -43,36 +43,14 @@ class Settings(BaseSettings):
     db_host: str = Field(None, alias="DB_HOST")
     db_port: Union[str, int] = Field(None, alias="DB_PORT")
 
-    # Storage settings
-    storage_type: str = Field(..., alias="STORAGE_TYPE")
-
-    # MinIO settings
-    minio_endpoint: str = Field(..., alias="MINIO_ENDPOINT")
-    minio_access_key: str = Field(..., alias="MINIO_ACCESS_KEY")
-    minio_secret_key: str = Field(..., alias="MINIO_SECRET_KEY")
-    minio_secure: Union[bool, str] = Field(..., alias="MINIO_SECURE")
-    minio_api_port: Union[str, int] = Field(..., alias="MINIO_API_PORT")
-    minio_console_port: Union[str, int] = Field(..., alias="MINIO_CONSOLE_PORT")
+    # Storage settings (AWS S3 only)
+    storage_type: str = Field("aws_s3", alias="STORAGE_TYPE")
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False  # Make environment variable names case-insensitive
         extra = "ignore"  # Ignore extra fields in .env that aren't in the model
-
-    @property
-    def minio_config(self) -> dict:
-        """Get MinIO configuration as a dictionary."""
-        return {
-            "endpoint": self.minio_endpoint,
-            "access_key": self.minio_access_key,
-            "secret_key": self.minio_secret_key,
-            "secure": (
-                self.minio_secure
-                if isinstance(self.minio_secure, bool)
-                else self.minio_secure.lower() == "true"
-            ),
-        }
 
     @property
     def db_url(self) -> str:

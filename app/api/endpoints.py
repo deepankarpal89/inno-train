@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
 import asyncio
-from scripts.utils import ist_now,calculate_duration
+from scripts.utils import ist_now, calculate_duration
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -19,6 +19,7 @@ from models.epoch_train import EpochTrain
 from models.eval import Eval
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
+from scripts.accuracy_metrics import get_or_calculate_best_epoch
 
 load_dotenv()
 router = APIRouter()
@@ -107,7 +108,21 @@ class TrainingTimeResponse(BaseModel):
     message: str
 
 
-async def _run_training_job_background(request_data: Dict[str, Any], job_uuid: str) -> str:
+class AccuracyMetricsResponse(BaseModel):
+    """Response model for accuracy metrics"""
+
+    job_uuid: str
+    iterations: int
+    train_accuracies: List[Optional[float]]
+    eval_accuracies: List[Optional[float]]
+    best_epochs: List[Optional[int]]
+    success: bool
+    message: str
+
+
+async def _run_training_job_background(
+    request_data: Dict[str, Any], job_uuid: str
+) -> str:
     """Run complete training job in background.
 
     Args:
@@ -134,7 +149,9 @@ async def _run_training_job_background(request_data: Dict[str, Any], job_uuid: s
         raise
 
 
-def _run_training_job_background_sync(request_data: Dict[str, Any], job_uuid: str) -> str:
+def _run_training_job_background_sync(
+    request_data: Dict[str, Any], job_uuid: str
+) -> str:
     """Run training job in a new event loop in a separate thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -156,7 +173,9 @@ async def hello_world():
 
 
 @router.post("/v1/training/start", response_model=TrainingResponse)
-async def start_training_job(request: TrainingRequest, background_tasks: BackgroundTasks):
+async def start_training_job(
+    request: TrainingRequest, background_tasks: BackgroundTasks
+):
 
     try:
         print("request", request)
@@ -164,7 +183,9 @@ async def start_training_job(request: TrainingRequest, background_tasks: Backgro
         workflow = TrainingWorkflow.for_new_job(logger=logger)
         job_uuid = await workflow._initialize_job(request.model_dump())
 
-        future = TRAINING_EXECUTOR.submit(_run_training_job_background_sync, request.model_dump(), job_uuid)
+        future = TRAINING_EXECUTOR.submit(
+            _run_training_job_background_sync, request.model_dump(), job_uuid
+        )
 
         # # Optional: Add callback to handle completion
         # future.add_done_callback(
@@ -196,10 +217,17 @@ async def get_job_status(job_uuid: str, session: AsyncSession = Depends(get_sess
             raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
         # Include completed_at if status is completed, failed, or cancelled
         completed_at = None
-        if job.status in [TrainingJobStatus.COMPLETED, TrainingJobStatus.FAILED, TrainingJobStatus.CANCELLED]:
+        if job.status in [
+            TrainingJobStatus.COMPLETED,
+            TrainingJobStatus.FAILED,
+            TrainingJobStatus.CANCELLED,
+        ]:
             completed_at = job.completed_at
         return JobStatusResponse(
-            job_uuid=str(job.uuid), status=job.status.value, success=True,completed_at=completed_at
+            job_uuid=str(job.uuid),
+            status=job.status.value,
+            success=True,
+            completed_at=completed_at,
         )
 
     except HTTPException:
@@ -209,8 +237,14 @@ async def get_job_status(job_uuid: str, session: AsyncSession = Depends(get_sess
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/v1/training/jobs/{job_uuid}/cancel", response_model=CancelTrainingResponse)
-async def cancel_training_job(job_uuid: str, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),) -> CancelTrainingResponse:
+@router.post(
+    "/v1/training/jobs/{job_uuid}/cancel", response_model=CancelTrainingResponse
+)
+async def cancel_training_job(
+    job_uuid: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> CancelTrainingResponse:
 
     try:
         # Check if job exists first using SQLAlchemy
@@ -272,7 +306,9 @@ async def cancel_training_job(job_uuid: str, background_tasks: BackgroundTasks, 
 
 
 @router.get("/v1/training/jobs/{job_uuid}/time", response_model=TrainingTimeResponse)
-async def get_job_training_time(job_uuid: str, session: AsyncSession = Depends(get_session)):
+async def get_job_training_time(
+    job_uuid: str, session: AsyncSession = Depends(get_session)
+):
     """
     Get training time information for a job.
 
@@ -294,20 +330,18 @@ async def get_job_training_time(job_uuid: str, session: AsyncSession = Depends(g
         elapsed_time = 0
         estimated_time = 0
         remaining_time = 0
-        
+
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
 
         # Calculate elapsed time
         no_iterations = (job.project_yaml_config or {}).get("no_iterations", 2)
-        gpu_setup_time = int(os.getenv('GPU_SETUP_TIME',5))
-        task_estimated_time = int(os.getenv('TEXT_CLASSIFICATION_ESTIMATED_TIME',30))
-        
-        
+        gpu_setup_time = int(os.getenv("GPU_SETUP_TIME", 5))
+        task_estimated_time = int(os.getenv("TEXT_CLASSIFICATION_ESTIMATED_TIME", 30))
+
         estimated_time = no_iterations * task_estimated_time + gpu_setup_time
         remaining_time = estimated_time - elapsed_time
-        
-        
+
         if job.status == TrainingJobStatus.PENDING:
             current_time = ist_now()
             elapsed_time = calculate_duration(job.created_at, current_time)
@@ -316,23 +350,29 @@ async def get_job_training_time(job_uuid: str, session: AsyncSession = Depends(g
             current_time = ist_now()
             elapsed_time = calculate_duration(job.created_at, current_time)
 
-            #check if a single iteration has been completed
-            stmt = select(TrainingIteration).where(
-                TrainingIteration.training_job_uuid == job_uuid,
-                TrainingIteration.step_type == StepType.ITERATION,
-                TrainingIteration.completed_at.isnot(None),
-                ).order_by(TrainingIteration.iteration_number.desc())
-            
+            # check if a single iteration has been completed
+            stmt = (
+                select(TrainingIteration)
+                .where(
+                    TrainingIteration.training_job_uuid == job_uuid,
+                    TrainingIteration.step_type == StepType.ITERATION,
+                    TrainingIteration.completed_at.isnot(None),
+                )
+                .order_by(TrainingIteration.iteration_number.desc())
+            )
+
             result = await session.execute(stmt)
             latest_iteration = result.scalars().first()
 
             if latest_iteration and latest_iteration.time_taken:
-                #use actual iteration time to estimate remaining time
+                # use actual iteration time to estimate remaining time
                 completed_iterations = latest_iteration.iteration_number
                 remaining_iterations = no_iterations - completed_iterations
 
-                #estimate remaining time based on actual iteration performance
-                remaining_time = remaining_iterations * latest_iteration.time_taken + gpu_setup_time
+                # estimate remaining time based on actual iteration performance
+                remaining_time = (
+                    remaining_iterations * latest_iteration.time_taken + gpu_setup_time
+                )
                 estimated_time = elapsed_time + remaining_time
             else:
                 remaining_time = estimated_time - elapsed_time
@@ -352,7 +392,7 @@ async def get_job_training_time(job_uuid: str, session: AsyncSession = Depends(g
             remaining_time=remaining_time,
             estimated_time=estimated_time,
             success=True,
-            message="Training time information retrieved successfully"
+            message="Training time information retrieved successfully",
         )
         print(resp)
         return resp
@@ -365,7 +405,97 @@ async def get_job_training_time(job_uuid: str, session: AsyncSession = Depends(g
             remaining_time=0,
             estimated_time=0,
             success=False,
-            message="Failed to retrieve training time information"
+            message="Failed to retrieve training time information",
         )
 
 
+@router.get(
+    "/v1/training/jobs/{job_uuid}/metrics/accuracy",
+    response_model=AccuracyMetricsResponse,
+)
+async def get_accuracy_metrics(
+    job_uuid: str, session: AsyncSession = Depends(get_session)
+):
+    """
+    Get accuracy metrics for each iteration.
+
+    For each iteration, selects the epoch with maximum eval accuracy.
+    Results are cached in iteration metadata for fast subsequent access.
+
+    Args:
+        job_uuid: UUID of the training job
+        session: Database session
+
+    Returns:
+        AccuracyMetricsResponse: Accuracy metrics per iteration
+    """
+    try:
+        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+        result = await session.execute(stmt)
+        job = result.scalars().first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+
+        stmt = (
+            select(TrainingIteration)
+            .where(
+                TrainingIteration.training_job_uuid == job_uuid,
+                TrainingIteration.step_type == StepType.ITERATION,
+            )
+            .order_by(TrainingIteration.iteration_number)
+        )
+
+        result = await session.execute(stmt)
+        iterations = result.scalars().all()
+
+        if not iterations:
+            return AccuracyMetricsResponse(
+                job_uuid=job_uuid,
+                iterations=0,
+                train_accuracies=[],
+                eval_accuracies=[],
+                best_epochs=[],
+                success=True,
+                message="No iterations found for this job",
+            )
+
+        train_accuracies = []
+        eval_accuracies = []
+        best_epochs = []
+        needs_commit = False
+
+        for iteration in iterations:
+            metadata_before = iteration.iteration_metadata or {}
+            had_best_epoch = "best_epoch" in metadata_before
+
+            best_epoch_data = await get_or_calculate_best_epoch(
+                job_uuid, iteration.iteration_number, session
+            )
+
+            if not had_best_epoch:
+                needs_commit = True
+
+            train_accuracies.append(best_epoch_data.get("train_accuracy"))
+            eval_accuracies.append(best_epoch_data.get("eval_accuracy"))
+            best_epochs.append(best_epoch_data.get("epoch_number"))
+
+        if needs_commit:
+            await session.commit()
+            logger.info(f"Calculated and cached best_epoch metadata for job {job_uuid}")
+
+        return AccuracyMetricsResponse(
+            job_uuid=job_uuid,
+            iterations=len(iterations),
+            train_accuracies=train_accuracies,
+            eval_accuracies=eval_accuracies,
+            best_epochs=best_epochs,
+            success=True,
+            message="Accuracy metrics retrieved successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get accuracy metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

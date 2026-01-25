@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from app.database import async_session_maker
 from scripts.lambda_client import LambdaClient
 from scripts.project_yaml_builder import ProjectYamlBuilder
-from scripts.s3_to_server_transfer import S3ToServerTransfer
 from scripts.utils import ist_now, calculate_duration
 from scripts.ssh_executor import SshExecutor
 from app.services.training_job_monitor import TrainingJobMonitor
@@ -117,7 +116,6 @@ class TrainingWorkflow:
 
         # Core services (always available)
         self.gpu_client = LambdaClient()
-        self.file_transfer = S3ToServerTransfer(logger=self.logger)
         self.executor = ThreadPoolExecutor(
             max_workers=WorkflowConstants.TRANSER_THREAD_COUNT
         )
@@ -232,13 +230,12 @@ class TrainingWorkflow:
 
             # Execute training with monitoring (blocks until completion)
             await self._execute_training_with_monitoring()
-            
-            
+
             # Always cleanup resources
             await self._cleanup_resources()
             self.job.completed_at = ist_now().isoformat()
             self.job.status = TrainingJobStatus.COMPLETED
-            
+
             # Calculate time_taken using the helper method
             self._update_job_time_taken()
 
@@ -257,7 +254,10 @@ class TrainingWorkflow:
         finally:
             try:
                 # Check if cleanup has already been performed
-                if not hasattr(self, '_cleanup_completed') or not self._cleanup_completed:
+                if (
+                    not hasattr(self, "_cleanup_completed")
+                    or not self._cleanup_completed
+                ):
                     await self._cleanup_resources()
                     self._cleanup_completed = True
                     self.logger.info("✅ Cleanup completed successfully")
@@ -356,12 +356,13 @@ class TrainingWorkflow:
                     self._cleanup_completed = True
                     self.logger.info("✅ Cleanup completed in cancel training")
                 else:
-                    self.logger.info("ℹ️ Cleanup already completed, skipping in cancel training")
-
+                    self.logger.info(
+                        "ℹ️ Cleanup already completed, skipping in cancel training"
+                    )
 
                 # Update status
                 self.job.status = TrainingJobStatus.CANCELLED
-                self.job.completed_at = ist_now().isoformat()   
+                self.job.completed_at = ist_now().isoformat()
 
                 # Calculate time_taken
                 self._update_job_time_taken()
@@ -521,42 +522,78 @@ class TrainingWorkflow:
 
     # ==================== File Transfer ====================
 
-    async def _transfer_all_files(self) -> None:
-        """Transfer all required files to GPU server."""
-        s3_bucket = self.job_s3_bucket
+    async def _setup_aws_on_gpu(self) -> None:
+        """Setup AWS CLI and credentials on GPU instance."""
+        try:
+            # Check if AWS CLI is installed
+            if not await asyncio.to_thread(self.ssh_executor.check_aws_cli_installed):
+                self.logger.info("Installing AWS CLI on GPU instance...")
+                await asyncio.to_thread(self.ssh_executor.install_aws_cli)
+                self.logger.info("✅ AWS CLI installed")
 
-        # Create transfer tasks for parallel execution
-        transfer_tasks = [
-            self._transfer_file(
-                s3_bucket,
-                self.state.yaml_builder.yaml_data[s3_key],
-                self.state.yaml_builder.yaml_data[path_key],
-                description,
+            # Configure AWS credentials
+            await asyncio.to_thread(
+                self.ssh_executor.setup_aws_credentials,
+                os.getenv("AWS_ACCESS_KEY_ID"),
+                os.getenv("AWS_SECRET_ACCESS_KEY"),
+                os.getenv("AWS_DEFAULT_REGION", "ap-south-1"),
+            )
+            self.logger.info("✅ AWS credentials configured on GPU")
+
+            # Verify credentials are working
+            self.logger.info("🔍 Verifying AWS credentials...")
+            credentials_valid = await asyncio.to_thread(
+                self.ssh_executor.verify_aws_credentials
+            )
+            if not credentials_valid:
+                raise InfrastructureError(
+                    "AWS credentials verification failed. Please check your AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+                )
+            self.logger.info("✅ AWS credentials verified successfully")
+
+        except Exception as e:
+            raise InfrastructureError(f"Failed to setup AWS on GPU: {str(e)}")
+
+    async def _transfer_all_files(self) -> None:
+        """Download files from S3 directly to GPU instance using AWS CLI."""
+        # Setup AWS CLI on GPU
+        await self._setup_aws_on_gpu()
+
+        s3_bucket = self.job_s3_bucket
+        yaml_data = self.state.yaml_builder.yaml_data
+
+        # Create directories on GPU
+        await asyncio.to_thread(
+            self.ssh_executor.execute_command, "mkdir -p data projects_yaml", check=True
+        )
+
+        # Download files from S3 in parallel
+        download_tasks = [
+            self._download_file_from_s3(
+                s3_bucket, yaml_data[s3_key], yaml_data[path_key], description
             )
             for s3_key, path_key, description in WorkflowConstants.TRANSFER_CONFIGS
         ]
 
-        # Execute transfers in parallel
-        await asyncio.gather(*transfer_tasks)
+        await asyncio.gather(*download_tasks)
+        self.logger.info("✅ All files downloaded from S3 to GPU")
 
-        # Upload training script
+        # Upload training script (still needed)
         await self._upload_training_script()
 
-    async def _transfer_file(
-        self, s3_bucket: str, s3_prefix: str, server_path: str, description: str
+    async def _download_file_from_s3(
+        self, s3_bucket: str, s3_path: str, local_path: str, description: str
     ) -> None:
-        """Transfer a single file from S3 to server."""
+        """Download a single file from S3 to GPU server."""
         try:
             await asyncio.to_thread(
-                self.file_transfer.transfer_file_to_server,
-                s3_bucket,
-                s3_prefix,
-                self.state.instance_ip,
-                server_path,
+                self.ssh_executor.download_from_s3, s3_bucket, s3_path, local_path
             )
-            self.logger.info(f"📤 Transferred {description}")
+            self.logger.info(f"📥 Downloaded {description} from S3")
         except Exception as e:
-            raise FileTransferError(f"Failed to transfer {description}: {str(e)}")
+            raise FileTransferError(
+                f"Failed to download {description} from S3: {str(e)}"
+            )
 
     async def _upload_training_script(self) -> None:
         """Upload the training script to the GPU server."""
@@ -626,31 +663,34 @@ class TrainingWorkflow:
             raise TrainingExecutionError(f"Training execution failed: {str(e)}")
 
     async def _download_outputs(self) -> bool:
-        """Download training outputs from GPU server to S3."""
-        self.logger.info(f"📊 Starting output download for job {self.state.job_uuid}")
+        """Upload training outputs from GPU directly to S3 using AWS CLI."""
+        self.logger.info(
+            f"📊 Uploading outputs from GPU to S3 for job {self.state.job_uuid}"
+        )
 
         try:
-            # Get output paths
             s3_bucket = self.job_s3_bucket
             s3_path = self.job_s3_path
-            # Transfer to S3
-            self.logger.info("🚀 Starting file transfer to S3...")
+
+            # Upload entire output directory to S3 using aws s3 sync
+            self.logger.info("🚀 Starting direct S3 upload from GPU...")
 
             await asyncio.to_thread(
-                self.file_transfer.transfer_files_to_s3,
-                self.state.instance_ip,
+                self.ssh_executor.upload_to_s3,
                 WorkflowConstants.REMOTE_OUTPUT_PATH,
                 s3_bucket,
                 s3_path,
                 recursive=True,
             )
 
-            self.logger.info(f"✅ Outputs transferred to S3: {s3_path}")
-
+            self.logger.info(f"✅ Outputs uploaded to S3: {s3_path}")
             return True
+
         except Exception as e:
-            self.logger.error(f"Failed to download outputs: {str(e)}", exc_info=True)
-            raise FileTransferError(f"Output download failed: {str(e)}")
+            self.logger.error(
+                f"Failed to upload outputs to S3: {str(e)}", exc_info=True
+            )
+            raise FileTransferError(f"Output upload to S3 failed: {str(e)}")
 
     # ==================== Cleanup & Error Handling ====================
 
@@ -666,7 +706,9 @@ class TrainingWorkflow:
                 self._cleanup_completed = True
                 self.logger.info("Cleanup completed successfully")
             else:
-                self.logger.info("Cleanup already completed, skipping in failure handler")
+                self.logger.info(
+                    "Cleanup already completed, skipping in failure handler"
+                )
             self.job.status = TrainingJobStatus.FAILED
             self.job.completed_at = ist_now().isoformat()
 
@@ -828,7 +870,7 @@ class TrainingWorkflow:
             root_logger.setLevel(logging.INFO)
 
         # Configure library loggers
-        for logger_name in ["paramiko", "tortoise", "scripts.s3_to_server_transfer"]:
+        for logger_name in ["paramiko", "tortoise"]:
             lib_logger = logging.getLogger(logger_name)
             lib_logger.setLevel(logging.INFO)
             lib_logger.propagate = True
