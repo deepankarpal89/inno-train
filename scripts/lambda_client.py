@@ -13,7 +13,7 @@ class LambdaClient:
 
     BASE_URL = "https://cloud.lambda.ai/api/v1"
 
-    def __init__(self, api_key: str = None, base_url: str = None,logger=None):
+    def __init__(self, api_key: str = None, base_url: str = None, logger=None):
         """Initialize the Lambda Cloud client."""
         load_dotenv()
 
@@ -53,16 +53,17 @@ class LambdaClient:
         """Get the cheapest available GPU instance."""
         data = self._make_request("GET", "/instance-types")["data"]
 
-        # Filter for available instances (any GPU count)
+        # Filter for available instances (any GPU count) and x86 architecture only
         avail_gpus = {
             k: v
             for k, v in data.items()
             if len(v["regions_with_capacity_available"]) > 0
+            and self.get_gpu_architecture(k) == "x86"
         }
 
         # Check if any instances are available
         if not avail_gpus:
-            self.logger.info("No GPU instances currently available")
+            self.logger.info("No x86 GPU instances currently available")
             return None
 
         # Sort by price and select cheapest
@@ -70,7 +71,8 @@ class LambdaClient:
             avail_gpus.items(),
             key=lambda x: x[1]["instance_type"]["price_cents_per_hour"],
         )
-
+        # sorted_gpus = self.filter_eight_gpu_instances(sorted_gpus)
+        print(f"sorted_gpus: {sorted_gpus[0]}")
         selected_gpu = sorted_gpus[0][0]
         selected_region = avail_gpus[selected_gpu]["regions_with_capacity_available"][
             0
@@ -78,6 +80,31 @@ class LambdaClient:
 
         resp = {"name": selected_gpu, "region": selected_region}
         return resp
+
+    def filter_eight_gpu_instances(self, sorted_gpus):
+        """Filter for 8 GPU instances."""
+        return [x for x in sorted_gpus if x[1]["instance_type"]["specs"]["gpus"] == 8]
+
+    @staticmethod
+    def get_gpu_architecture(instance_type_name: str) -> str:
+        """
+        Determine if GPU instance uses ARM or x86 architecture.
+
+        Args:
+            instance_type_name: Name of the instance type (e.g., 'gpu_1x_gh200')
+
+        Returns:
+            'ARM' for ARM-based instances, 'x86' for AMD/Intel-based instances
+        """
+        # GH200 (Grace Hopper) uses ARM architecture
+        arm_indicators = ["gh200", "grace"]
+
+        instance_lower = instance_type_name.lower()
+
+        if any(indicator in instance_lower for indicator in arm_indicators):
+            return "ARM"
+        else:
+            return "x86"
 
     def list_instances(self):
         """List all Lambda Cloud instances."""
@@ -139,7 +166,9 @@ class LambdaClient:
                 "POST", "/instance-operations/launch", json=payload
             )
             instance_id = resp["data"]["instance_ids"][0]
-            self.logger.info(f"Instance {instance_id} launched, waiting for active state...")
+            self.logger.info(
+                f"Instance {instance_id} launched, waiting for active state..."
+            )
 
             # Poll for active status with retry logic
             max_wait_time = 600  # 10 minutes max
@@ -166,7 +195,9 @@ class LambdaClient:
                 except Exception as poll_error:
                     retry_count += 1
                     if retry_count > max_retries:
-                        self.logger.info(f"Max retries exceeded during polling: {poll_error}")
+                        self.logger.info(
+                            f"Max retries exceeded during polling: {poll_error}"
+                        )
                         # Instance might still be launching, return what we have
                         self.logger.info(
                             f"Returning instance {instance_id} (may not be active yet)"
@@ -180,7 +211,9 @@ class LambdaClient:
                     elapsed_time += 5
 
             # Timeout reached
-            self.logger.info(f"Timeout waiting for instance to be active after {max_wait_time}s")
+            self.logger.info(
+                f"Timeout waiting for instance to be active after {max_wait_time}s"
+            )
             return self.get_instance(instance_id)
 
         except Exception as e:
@@ -221,20 +254,30 @@ class LambdaClient:
 
 
 def main():
-    instance_ip = "64.181.234.219"
-    client = LambdaClient()
-    # First, list all instances to get their IDs
-    instances = client.list_instances()
-    self.logger.info("Available instances:")
-    for instance in instances:
-        self.logger.info(
-            f"ID: {instance['id']}, IP: {instance.get('ip', 'N/A')}, Name: {instance.get('name', 'N/A')}"
-        )
+    import json
 
-    # If you want to get details of a specific instance, use its UUID
-    # instance_id = "your-instance-uuid-here"
-    # instance_details = client.get_instance(instance_id)
-    # self.logger.info(instance_details)
+    client = LambdaClient()
+
+    # print("=" * 70)
+    # print("CURRENTLY RUNNING INSTANCES")
+    # print("=" * 70)
+    # instances = client.list_instances()
+    # print(json.dumps(instances, indent=2))
+
+    # print("\n" + "=" * 70)
+    # print("AVAILABLE GPU INSTANCE TYPES")
+    # print("=" * 70)
+    # available_response = client._make_request("GET", "/instance-types")
+    # print(json.dumps(available_response, indent=2))
+
+    print("\n" + "=" * 70)
+    print("FILTERED AVAILABLE GPU INSTANCES")
+    print("=" * 70)
+    cheapest = client.list_available_instances()
+    if cheapest:
+        print(f"Cheapest available: {json.dumps(cheapest, indent=2)}")
+    else:
+        print("No GPU instances currently available")
 
 
 if __name__ == "__main__":

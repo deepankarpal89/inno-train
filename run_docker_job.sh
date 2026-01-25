@@ -21,6 +21,22 @@ mkdir -p "${OUTPUT_DIR}"
 
 echo "[$(date)] Starting Docker job..." | tee -a "${LOG_FILE}"
 
+# Function to check GPU availability
+check_gpu_availability() {
+    if ! command -v nvidia-smi &> /dev/null; then
+        echo "[$(date)] Warning: nvidia-smi not found. GPU may not be available." | tee -a "${LOG_FILE}"
+        return 1
+    fi
+    
+    if ! nvidia-smi &> /dev/null; then
+        echo "[$(date)] Warning: GPU not accessible. Running in CPU mode." | tee -a "${LOG_FILE}"
+        return 1
+    fi
+    
+    echo "[$(date)] GPU detected and accessible" | tee -a "${LOG_FILE}"
+    return 0
+}
+
 # Function to handle Docker login
 login_to_docker() {
     # Check if credentials are provided as environment variables
@@ -41,27 +57,47 @@ login_to_docker() {
     return 0
 }
 
+# Check GPU availability
+check_gpu_availability
+GPU_AVAILABLE=$?
+
 # Login to Docker Hub
 login_to_docker || exit 1
 
-# Pull the Docker image
-echo "[$(date)] Pulling Docker image: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
-sudo docker pull "${IMAGE_NAME}" 2>&1 | tee -a "${LOG_FILE}"
-
-# Check if pull was successful
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "[$(date)] Error: Failed to pull Docker image" | tee -a "${LOG_FILE}"
-    exit 1
+# Check if Docker image exists locally, otherwise pull from Docker Hub
+echo "[$(date)] Checking for local Docker image: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
+if ! sudo docker image inspect "${IMAGE_NAME}" &> /dev/null; then
+    echo "[$(date)] Local image not found, pulling from Docker Hub: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
+    sudo docker pull "${IMAGE_NAME}" 2>&1 | tee -a "${LOG_FILE}"
+    
+    # Check if pull was successful
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        echo "[$(date)] Error: Failed to pull Docker image from Docker Hub" | tee -a "${LOG_FILE}"
+        echo "[$(date)] Please ensure the image ${IMAGE_NAME} exists on Docker Hub" | tee -a "${LOG_FILE}"
+        exit 1
+    fi
+    echo "[$(date)] Successfully pulled Docker image from Docker Hub" | tee -a "${LOG_FILE}"
+else
+    echo "[$(date)] Using local Docker image: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
 fi
 
 # Run the Docker container
 echo "[$(date)] Starting container..." | tee -a "${LOG_FILE}"
-sudo docker run --name "${CONTAINER_NAME}" \
-    --rm \
-    -v "$(pwd)/data:/app/data" \
-    -v "$(pwd)/projects_yaml:/app/projects_yaml" \
-    -v "$(pwd)/output:/app/output" \
-    "${IMAGE_NAME}" 2>&1 | tee -a "${LOG_FILE}"
+
+# Build Docker run command based on GPU availability
+DOCKER_CMD="sudo docker run --name \"${CONTAINER_NAME}\" --rm"
+
+if [ $GPU_AVAILABLE -eq 0 ]; then
+    echo "[$(date)] Running with GPU support" | tee -a "${LOG_FILE}"
+    DOCKER_CMD="$DOCKER_CMD --gpus all"
+else
+    echo "[$(date)] Running in CPU-only mode" | tee -a "${LOG_FILE}"
+fi
+
+DOCKER_CMD="$DOCKER_CMD -v \"$(pwd)/data:/app/data\" -v \"$(pwd)/projects_yaml:/app/projects_yaml\" -v \"$(pwd)/output:/app/output\" \"${IMAGE_NAME}\""
+
+# Execute the Docker command
+eval "$DOCKER_CMD" 2>&1 | tee -a "${LOG_FILE}"
 
 # Check if container ran successfully
 if [ ${PIPESTATUS[0]} -eq 0 ]; then

@@ -268,29 +268,24 @@ async def cancel_training_job(
                 status=job.status.value,
             )
 
-        # Mark job as cancelling immediately
-        job.status = TrainingJobStatus.CANCELLED
-        session.add(job)
-        await session.commit()
-
-        # Run actual cleanup in background
+        # Run actual cleanup in background - workflow handles status updates
         async def perform_cleanup():
             try:
                 workflow = await TrainingWorkflow.for_existing_job(
                     job_uuid=job_uuid, logger=logger
                 )
-                await workflow._cleanup_resources()
+                await workflow.cancel_training()
                 logger.info(f"🛑 Background cleanup completed for job {job_uuid}")
             except Exception as e:
                 logger.error(f"Background cleanup failed for job {job_uuid}: {str(e)}")
 
-        # background_tasks.add_task(perform_cleanup)
+        background_tasks.add_task(perform_cleanup)
 
         return CancelTrainingResponse(
             success=True,
             message=f"Job {job_uuid} cancellation initiated",
             job_uuid=job_uuid,
-            status="cancelling",
+            status=job.status.value,
         )
 
     except JobNotFoundError as e:
