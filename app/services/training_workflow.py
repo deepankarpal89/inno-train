@@ -17,6 +17,7 @@ from models.training_job import TrainingJob, TrainingJobStatus
 from concurrent.futures import ThreadPoolExecutor
 from scripts.file_logger import get_file_logger
 from app.services.db_service import db_service
+from scripts.accuracy_metrics_calculator import AccuracyMetricsCalculator
 
 
 class WorkflowError(Exception):
@@ -243,6 +244,9 @@ class TrainingWorkflow:
             async with async_session_maker() as session:
                 session.add(self.job)
                 await session.commit()
+
+            # Calculate and update accuracy metrics
+            await self._calculate_accuracy_metrics()
 
             self.logger.info(f"✅ Training job {self.job_uuid} completed successfully")
             return self.job_uuid
@@ -837,6 +841,23 @@ class TrainingWorkflow:
             )
             if self.job.time_taken is not None:
                 self.logger.info(f"Job duration: {self.job.time_taken:.2f} minutes")
+
+    async def _calculate_accuracy_metrics(self) -> None:
+        """Calculate and update accuracy metrics for the completed training job."""
+        try:
+            self.logger.info(f"📊 Calculating accuracy metrics for job {self.job_uuid}")
+            calculator = AccuracyMetricsCalculator(
+                training_job_uuid=self.job_uuid, logger=self.logger
+            )
+            await calculator.run()
+            self.logger.info(
+                f"✅ Accuracy metrics calculated and updated for job {self.job_uuid}"
+            )
+        except Exception as e:
+            self.logger.error(
+                f"⚠️ Failed to calculate accuracy metrics: {str(e)}", exc_info=True
+            )
+            # Don't fail the entire job if metrics calculation fails
 
     def _create_logger(self) -> logging.Logger:
         """Create logger with console and file handlers."""

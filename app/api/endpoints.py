@@ -19,7 +19,7 @@ from models.epoch_train import EpochTrain
 from models.eval import Eval
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-from scripts.accuracy_metrics import get_or_calculate_best_epoch
+
 
 load_dotenv()
 router = APIRouter()
@@ -409,93 +409,93 @@ async def get_job_training_time(
         )
 
 
-@router.get(
-    "/v1/training/jobs/{job_uuid}/metrics/accuracy",
-    response_model=AccuracyMetricsResponse,
-)
-async def get_accuracy_metrics(
-    job_uuid: str, session: AsyncSession = Depends(get_session)
-):
-    """
-    Get accuracy metrics for each iteration.
+# @router.get(
+#     "/v1/training/jobs/{job_uuid}/metrics/accuracy",
+#     response_model=AccuracyMetricsResponse,
+# )
+# async def get_accuracy_metrics(
+#     job_uuid: str, session: AsyncSession = Depends(get_session)
+# ):
+#     """
+#     Get accuracy metrics for each iteration.
 
-    For each iteration, selects the epoch with maximum eval accuracy.
-    Results are cached in iteration metadata for fast subsequent access.
+#     For each iteration, selects the epoch with maximum eval accuracy.
+#     Results are cached in iteration metadata for fast subsequent access.
 
-    Args:
-        job_uuid: UUID of the training job
-        session: Database session
+#     Args:
+#         job_uuid: UUID of the training job
+#         session: Database session
 
-    Returns:
-        AccuracyMetricsResponse: Accuracy metrics per iteration
-    """
-    try:
-        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
-        result = await session.execute(stmt)
-        job = result.scalars().first()
+#     Returns:
+#         AccuracyMetricsResponse: Accuracy metrics per iteration
+#     """
+#     try:
+#         stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+#         result = await session.execute(stmt)
+#         job = result.scalars().first()
 
-        if not job:
-            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+#         if not job:
+#             raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
 
-        stmt = (
-            select(TrainingIteration)
-            .where(
-                TrainingIteration.training_job_uuid == job_uuid,
-                TrainingIteration.step_type == StepType.ITERATION,
-            )
-            .order_by(TrainingIteration.iteration_number)
-        )
+#         stmt = (
+#             select(TrainingIteration)
+#             .where(
+#                 TrainingIteration.training_job_uuid == job_uuid,
+#                 TrainingIteration.step_type == StepType.ITERATION,
+#             )
+#             .order_by(TrainingIteration.iteration_number)
+#         )
 
-        result = await session.execute(stmt)
-        iterations = result.scalars().all()
+#         result = await session.execute(stmt)
+#         iterations = result.scalars().all()
 
-        if not iterations:
-            return AccuracyMetricsResponse(
-                job_uuid=job_uuid,
-                iterations=0,
-                train_accuracies=[],
-                eval_accuracies=[],
-                best_epochs=[],
-                success=True,
-                message="No iterations found for this job",
-            )
+#         if not iterations:
+#             return AccuracyMetricsResponse(
+#                 job_uuid=job_uuid,
+#                 iterations=0,
+#                 train_accuracies=[],
+#                 eval_accuracies=[],
+#                 best_epochs=[],
+#                 success=True,
+#                 message="No iterations found for this job",
+#             )
 
-        train_accuracies = []
-        eval_accuracies = []
-        best_epochs = []
-        needs_commit = False
+#         train_accuracies = []
+#         eval_accuracies = []
+#         best_epochs = []
+#         needs_commit = False
 
-        for iteration in iterations:
-            metadata_before = iteration.iteration_metadata or {}
-            had_best_epoch = "best_epoch" in metadata_before
+#         for iteration in iterations:
+#             metadata_before = iteration.iteration_metadata or {}
+#             had_best_epoch = "best_epoch" in metadata_before
 
-            best_epoch_data = await get_or_calculate_best_epoch(
-                job_uuid, iteration.iteration_number, session
-            )
+#             best_epoch_data = await get_or_calculate_best_epoch(
+#                 job_uuid, iteration.iteration_number, session
+#             )
 
-            if not had_best_epoch:
-                needs_commit = True
+#             if not had_best_epoch:
+#                 needs_commit = True
 
-            train_accuracies.append(best_epoch_data.get("train_accuracy"))
-            eval_accuracies.append(best_epoch_data.get("eval_accuracy"))
-            best_epochs.append(best_epoch_data.get("epoch_number"))
+#             train_accuracies.append(best_epoch_data.get("train_accuracy"))
+#             eval_accuracies.append(best_epoch_data.get("eval_accuracy"))
+#             best_epochs.append(best_epoch_data.get("epoch_number"))
 
-        if needs_commit:
-            await session.commit()
-            logger.info(f"Calculated and cached best_epoch metadata for job {job_uuid}")
+#         if needs_commit:
+#             await session.commit()
+#             logger.info(f"Calculated and cached best_epoch metadata for job {job_uuid}")
 
-        return AccuracyMetricsResponse(
-            job_uuid=job_uuid,
-            iterations=len(iterations),
-            train_accuracies=train_accuracies,
-            eval_accuracies=eval_accuracies,
-            best_epochs=best_epochs,
-            success=True,
-            message="Accuracy metrics retrieved successfully",
-        )
+#         return AccuracyMetricsResponse(
+#             job_uuid=job_uuid,
+#             iterations=len(iterations),
+#             train_accuracies=train_accuracies,
+#             eval_accuracies=eval_accuracies,
+#             best_epochs=best_epochs,
+#             success=True,
+#             message="Accuracy metrics retrieved successfully",
+#         )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get accuracy metrics: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Failed to get accuracy metrics: {str(e)}")
+#         raise HTTPException(status_code=500, detail=str(e))

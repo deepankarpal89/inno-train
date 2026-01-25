@@ -2,10 +2,18 @@
 Test script for accuracy_metrics.py functions
 
 This script tests each function in the accuracy_metrics module with real database data.
+
+Usage:
+    python test_accuracy_metrics.py [training_job_uuid]
+
+    If training_job_uuid is provided, tests will run for that specific job.
+    Otherwise, tests will use the first available job in the database.
 """
 
 import asyncio
 import sys
+import argparse
+from uuid import UUID
 from dotenv import load_dotenv
 from sqlalchemy import select
 
@@ -31,17 +39,20 @@ def print_section(title: str):
     print("=" * 70)
 
 
-async def test_get_best_eval_for_iteration():
+async def test_get_best_eval_for_iteration(training_job_uuid: UUID = None):
     """Test get_best_eval_for_iteration function."""
     print_section("TEST 1: get_best_eval_for_iteration()")
 
     async with async_session_maker() as session:
         # Get a sample evaluation iteration
-        stmt = (
-            select(TrainingIteration)
-            .where(TrainingIteration.step_type == StepType.EVALUATION)
-            .limit(1)
+        stmt = select(TrainingIteration).where(
+            TrainingIteration.step_type == StepType.EVALUATION
         )
+        if training_job_uuid:
+            stmt = stmt.where(
+                TrainingIteration.training_job_uuid == str(training_job_uuid)
+            )
+        stmt = stmt.limit(1)
         result = await session.execute(stmt)
         eval_iteration = result.scalars().first()
 
@@ -64,17 +75,20 @@ async def test_get_best_eval_for_iteration():
         return True
 
 
-async def test_get_train_accuracy_for_epoch():
+async def test_get_train_accuracy_for_epoch(training_job_uuid: UUID = None):
     """Test get_train_accuracy_for_epoch function."""
     print_section("TEST 2: get_train_accuracy_for_epoch()")
 
     async with async_session_maker() as session:
         # Get a sample training iteration
-        stmt = (
-            select(TrainingIteration)
-            .where(TrainingIteration.step_type == StepType.ITERATION)
-            .limit(1)
+        stmt = select(TrainingIteration).where(
+            TrainingIteration.step_type == StepType.ITERATION
         )
+        if training_job_uuid:
+            stmt = stmt.where(
+                TrainingIteration.training_job_uuid == str(training_job_uuid)
+            )
+        stmt = stmt.limit(1)
         result = await session.execute(stmt)
         train_iteration = result.scalars().first()
 
@@ -97,13 +111,16 @@ async def test_get_train_accuracy_for_epoch():
         return True
 
 
-async def test_get_iteration_steps():
+async def test_get_iteration_steps(training_job_uuid: UUID = None):
     """Test get_iteration_steps function."""
     print_section("TEST 3: get_iteration_steps()")
 
     async with async_session_maker() as session:
         # Get a sample job
-        stmt = select(TrainingJob).limit(1)
+        if training_job_uuid:
+            stmt = select(TrainingJob).where(TrainingJob.uuid == str(training_job_uuid))
+        else:
+            stmt = select(TrainingJob).limit(1)
         result = await session.execute(stmt)
         job = result.scalars().first()
 
@@ -152,13 +169,16 @@ async def test_get_iteration_steps():
         return True
 
 
-async def test_calculate_best_epoch_metadata():
+async def test_calculate_best_epoch_metadata(training_job_uuid: UUID = None):
     """Test calculate_best_epoch_metadata function."""
     print_section("TEST 4: calculate_best_epoch_metadata()")
 
     async with async_session_maker() as session:
         # Get a sample job
-        stmt = select(TrainingJob).limit(1)
+        if training_job_uuid:
+            stmt = select(TrainingJob).where(TrainingJob.uuid == str(training_job_uuid))
+        else:
+            stmt = select(TrainingJob).limit(1)
         result = await session.execute(stmt)
         job = result.scalars().first()
 
@@ -208,17 +228,20 @@ async def test_calculate_best_epoch_metadata():
         return True
 
 
-async def test_cache_best_epoch_in_metadata():
+async def test_cache_best_epoch_in_metadata(training_job_uuid: UUID = None):
     """Test cache_best_epoch_in_metadata function."""
     print_section("TEST 5: cache_best_epoch_in_metadata()")
 
     async with async_session_maker() as session:
         # Get a sample training iteration
-        stmt = (
-            select(TrainingIteration)
-            .where(TrainingIteration.step_type == StepType.ITERATION)
-            .limit(1)
+        stmt = select(TrainingIteration).where(
+            TrainingIteration.step_type == StepType.ITERATION
         )
+        if training_job_uuid:
+            stmt = stmt.where(
+                TrainingIteration.training_job_uuid == str(training_job_uuid)
+            )
+        stmt = stmt.limit(1)
         result = await session.execute(stmt)
         train_iteration = result.scalars().first()
 
@@ -259,13 +282,16 @@ async def test_cache_best_epoch_in_metadata():
         return True
 
 
-async def test_get_or_calculate_best_epoch():
+async def test_get_or_calculate_best_epoch(training_job_uuid: UUID = None):
     """Test get_or_calculate_best_epoch function (main entry point)."""
     print_section("TEST 6: get_or_calculate_best_epoch() - Main Function")
 
     async with async_session_maker() as session:
         # Get a sample job
-        stmt = select(TrainingJob).limit(1)
+        if training_job_uuid:
+            stmt = select(TrainingJob).where(TrainingJob.uuid == str(training_job_uuid))
+        else:
+            stmt = select(TrainingJob).limit(1)
         result = await session.execute(stmt)
         job = result.scalars().first()
 
@@ -318,13 +344,16 @@ async def test_get_or_calculate_best_epoch():
         return True
 
 
-async def test_full_workflow():
+async def test_full_workflow(training_job_uuid: UUID = None):
     """Test the complete workflow with multiple iterations."""
     print_section("TEST 7: Full Workflow - Multiple Iterations")
 
     async with async_session_maker() as session:
         # Get a sample job
-        stmt = select(TrainingJob).limit(1)
+        if training_job_uuid:
+            stmt = select(TrainingJob).where(TrainingJob.uuid == str(training_job_uuid))
+        else:
+            stmt = select(TrainingJob).limit(1)
         result = await session.execute(stmt)
         job = result.scalars().first()
 
@@ -374,11 +403,16 @@ async def test_full_workflow():
         return True
 
 
-async def main():
+async def main(training_job_uuid: UUID = None):
     """Run all tests."""
     print("\n" + "🧪" * 35)
     print("  ACCURACY METRICS TEST SUITE")
     print("🧪" * 35)
+
+    if training_job_uuid:
+        print(f"\n🎯 Testing with specific training job: {training_job_uuid}")
+    else:
+        print("\n🎯 Testing with first available training job in database")
 
     tests = [
         ("get_best_eval_for_iteration", test_get_best_eval_for_iteration),
@@ -394,7 +428,7 @@ async def main():
 
     for test_name, test_func in tests:
         try:
-            result = await test_func()
+            result = await test_func(training_job_uuid)
             results.append((test_name, result, None))
         except Exception as e:
             print(f"\n❌ ERROR in {test_name}: {str(e)}")
@@ -426,5 +460,25 @@ async def main():
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
+    parser = argparse.ArgumentParser(
+        description="Test accuracy_metrics.py functions with real database data"
+    )
+    parser.add_argument(
+        "training_job_uuid",
+        nargs="?",
+        type=str,
+        help="UUID of the training job to test (optional)",
+    )
+
+    args = parser.parse_args()
+
+    training_job_uuid = None
+    if args.training_job_uuid:
+        try:
+            training_job_uuid = UUID(args.training_job_uuid)
+        except ValueError:
+            print(f"❌ Invalid UUID format: {args.training_job_uuid}")
+            sys.exit(1)
+
+    exit_code = asyncio.run(main(training_job_uuid))
     sys.exit(exit_code)
