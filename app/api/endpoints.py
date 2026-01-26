@@ -120,6 +120,18 @@ class AccuracyMetricsResponse(BaseModel):
     message: str
 
 
+class EvalFilePathsResponse(BaseModel):
+    """Response model for evaluation file paths"""
+
+    job_uuid: str
+    train_file_path: Optional[str] = None
+    cv_file_path: Optional[str] = None
+    best_iteration: Optional[int] = None
+    best_epoch: Optional[int] = None
+    success: bool
+    message: str
+
+
 async def _run_training_job_background(
     request_data: Dict[str, Any], job_uuid: str
 ) -> str:
@@ -516,4 +528,118 @@ async def get_accuracy_metrics(
         raise
     except Exception as e:
         logger.error(f"Failed to get accuracy metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/v1/training/jobs/{job_uuid}/eval-file-paths",
+    response_model=EvalFilePathsResponse,
+)
+async def get_eval_file_paths(
+    job_uuid: str, session: AsyncSession = Depends(get_session)
+):
+    """
+    Get S3 file paths for train and CV evaluation files based on best iteration.
+
+    Constructs S3 URIs for evaluation files using the best iteration metadata
+    from the job's metadata field.
+
+    Args:
+        job_uuid: UUID of the training job
+        session: Database session
+
+    Returns:
+        EvalFilePathsResponse: S3 file paths for train and CV evaluation files
+    """
+    try:
+        stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
+        result = await session.execute(stmt)
+        job = result.scalars().first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_uuid} not found")
+
+        # Extract metrics from job_metadata
+        job_metadata = job.job_metadata or {}
+        job_metrics = job_metadata.get("metrics", {})
+
+        if not job_metrics:
+            return EvalFilePathsResponse(
+                job_uuid=job_uuid,
+                train_file_path=None,
+                cv_file_path=None,
+                best_iteration=None,
+                best_epoch=None,
+                success=False,
+                message="Job has no metrics populated in metadata",
+            )
+
+        # Get best iteration number
+        best_iteration = job_metrics.get("best_iteration")
+        if best_iteration is None:
+            return EvalFilePathsResponse(
+                job_uuid=job_uuid,
+                train_file_path=None,
+                cv_file_path=None,
+                best_iteration=None,
+                best_epoch=None,
+                success=False,
+                message="No best_iteration found in job metadata",
+            )
+
+        # Extract epoch number from best_eval_cv model_id (format: "iteration_X_epoch_Y")
+        best_eval_cv = job_metrics.get("best_eval_cv", {})
+        model_id = best_eval_cv.get("model_id", "")
+
+        # Parse epoch number from model_id
+        best_epoch = None
+        if model_id:
+            parts = model_id.split("_")
+            if len(parts) >= 4 and parts[2] == "epoch":
+                try:
+                    best_epoch = int(parts[3])
+                except ValueError:
+                    pass
+
+        if best_epoch is None:
+            return EvalFilePathsResponse(
+                job_uuid=job_uuid,
+                train_file_path=None,
+                cv_file_path=None,
+                best_iteration=best_iteration,
+                best_epoch=None,
+                success=False,
+                message="Could not parse epoch number from model_id",
+            )
+
+        # Get project_id and training_run_id from job
+        project_id = job.project_id
+        training_run_id = job.training_run_id
+
+        # Get project_name from project_yaml_config
+        project_yaml_config = job.project_yaml_config or {}
+        project_name = project_yaml_config.get("project_name", "unknown_project")
+
+        # Construct S3 base path
+        s3_bucket = os.getenv("S3_BUCKET", "innotone-media-staging")
+        base_path = f"s3://{s3_bucket}/media/projects/{project_id}/{training_run_id}/{project_name}/training/run_{best_iteration}/eval"
+
+        # Construct file paths
+        train_file_path = f"{base_path}/eval_train_epoch_{best_epoch}.csv"
+        cv_file_path = f"{base_path}/eval_cv_epoch_{best_epoch}.csv"
+
+        return EvalFilePathsResponse(
+            job_uuid=job_uuid,
+            train_file_path=train_file_path,
+            cv_file_path=cv_file_path,
+            best_iteration=best_iteration,
+            best_epoch=best_epoch,
+            success=True,
+            message="Evaluation file paths retrieved successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get evaluation file paths: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
