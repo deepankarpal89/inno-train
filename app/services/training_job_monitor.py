@@ -5,6 +5,7 @@ TrainingJobMonitor - Monitors global.json file on GPU server and updates databas
 import asyncio
 import json
 import logging
+import sys
 import tempfile
 import os
 import time
@@ -74,6 +75,7 @@ class TrainingJobMonitor:
         remote_log_path: str = "output/*/logs/global.json",
         poll_interval: int = 5,
         logger: logging.Logger = None,
+        completion_callback=None,
     ):
         """
         Initialize the monitor.
@@ -84,6 +86,7 @@ class TrainingJobMonitor:
             remote_log_path: Path to global.json on remote server (supports wildcards)
             poll_interval: Polling interval in seconds
             logger: Logger instance
+            completion_callback: Async callback function(success: bool, error_message: Optional[str]) to invoke when training completes
         """
         self.training_job_uuid = training_job_uuid
         self.training_job = None  # Will be loaded async in start_monitoring
@@ -92,6 +95,7 @@ class TrainingJobMonitor:
         self.poll_interval = poll_interval
         self.logger = logger or self._setup_logger()
         self.update_batcher = UpdateBatcher()
+        self.completion_callback = completion_callback
 
         # Track processed lines to avoid duplicates
         self.processed_line_count = 0
@@ -114,6 +118,8 @@ class TrainingJobMonitor:
 
         # Flag to stop monitoring
         self.should_stop = False
+        self.training_completed_successfully = False
+        self.training_error_message = None
 
     async def _safe_db_operation(self, operation_name: str, operation_func):
         """Safely execute database operations with error handling."""
@@ -158,7 +164,9 @@ class TrainingJobMonitor:
 
         return resp
 
-    def validate_duration(self, duration_value, start_time, end_time, context="") -> float:
+    def validate_duration(
+        self, duration_value, start_time, end_time, context=""
+    ) -> float:
         """Validate and calculate duration, falling back to timestamp calculation if invalid.
 
         Args:
@@ -287,16 +295,52 @@ class TrainingJobMonitor:
             raise
         except Exception as e:
             self.logger.error(f"Fatal error in monitoring: {str(e)}")
+            self.training_error_message = str(e)
             try:
                 await self._mark_job_failed(str(e))
             except Exception as db_error:
                 self.logger.error(f"Failed to mark job as failed: {db_error}")
             raise
+        finally:
+            # Invoke completion callback if provided
+            if self.completion_callback:
+                try:
+                    await self.completion_callback(
+                        success=self.training_completed_successfully,
+                        error_message=self.training_error_message,
+                    )
+                except Exception as callback_error:
+                    self.logger.error(f"Error in completion callback: {callback_error}")
 
     async def stop_monitoring(self):
         """Stop the monitoring loop."""
         self.logger.info("🛑 Stopping monitoring")
         self.should_stop = True
+
+    async def _check_script_running(self) -> bool:
+        """Check if the training script is still running on the GPU server.
+
+        Returns:
+            bool: True if script is running, False otherwise
+        """
+        try:
+            # Check if bash process running run_docker_job.sh exists
+            check_cmd = "pgrep -f 'bash.*run_docker_job.sh' || echo 'not_running'"
+            result = await asyncio.to_thread(
+                self.ssh_executor.execute_command, check_cmd, check=False
+            )
+
+            if result.success:
+                output = result.stdout.strip()
+                # If we get 'not_running' or empty output, script is not running
+                if output == "not_running" or not output:
+                    return False
+                # If we get a PID, script is still running
+                return True
+            return False
+        except Exception as e:
+            self.logger.warning(f"Failed to check script status: {e}")
+            return True  # Assume running if we can't check
 
     async def _poll_and_update(self):
         """Poll the global.json file and update database."""
@@ -305,6 +349,18 @@ class TrainingJobMonitor:
             log_content = await self._download_log_file()
 
             if not log_content:
+                # Check if script is still running
+                script_running = await self._check_script_running()
+                if not script_running:
+                    self.logger.warning(
+                        "Script has stopped but no log file found - possible failure"
+                    )
+                    self.training_error_message = (
+                        "Training script stopped without producing logs"
+                    )
+                    await self.stop_monitoring()
+                    return
+
                 # If we couldn't get the log file, increase the polling interval temporarily
                 # to avoid hammering the server
                 await asyncio.sleep(
@@ -317,6 +373,14 @@ class TrainingJobMonitor:
             new_lines = lines[self.processed_line_count :]
 
             if not new_lines:
+                # Check if script completed but no new logs
+                script_running = await self._check_script_running()
+                if not script_running and not self.training_completed_successfully:
+                    self.logger.warning(
+                        "Script has stopped but training not marked complete - checking for errors"
+                    )
+                    # Check the script log file for errors
+                    await self._check_script_log_for_errors()
                 return
 
             # Process each new line
@@ -400,6 +464,37 @@ class TrainingJobMonitor:
                     return await operation_func(session)
                 else:
                     return await operation_func
+
+    async def _check_script_log_for_errors(self) -> None:
+        """Check the script log file for error messages."""
+        try:
+            result = await asyncio.to_thread(
+                self.ssh_executor.execute_command,
+                "tail -n 50 run_docker_job.sh.log 2>/dev/null || echo 'no_log'",
+                check=False,
+            )
+
+            if result.success and result.stdout.strip() != "no_log":
+                log_content = result.stdout.strip()
+                self.logger.error(f"Script log (last 50 lines):\n{log_content}")
+
+                # Look for common error patterns
+                if "Error:" in log_content or "failed" in log_content.lower():
+                    self.training_error_message = (
+                        "Training script failed - check logs for details"
+                    )
+                else:
+                    self.training_error_message = "Training script stopped unexpectedly"
+            else:
+                self.training_error_message = (
+                    "Training script stopped and no log file found"
+                )
+
+            await self.stop_monitoring()
+        except Exception as e:
+            self.logger.error(f"Failed to check script log: {e}")
+            self.training_error_message = f"Failed to check script status: {e}"
+            await self.stop_monitoring()
 
     async def _ensure_ssh_connection(self):
         """Ensure SSH connection is active, attempt to reconnect if not."""
@@ -521,6 +616,9 @@ class TrainingJobMonitor:
             # No need to call commit as it's handled by the transaction
 
             self.logger.info("✅ Project completed")
+
+            # Mark training as successfully completed
+            self.training_completed_successfully = True
 
             # Stop monitoring - training is complete
             await self.stop_monitoring()

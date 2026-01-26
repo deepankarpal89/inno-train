@@ -48,9 +48,16 @@ login_to_docker() {
     fi
     
     echo "[$(date)] Logging into Docker Hub..." | tee -a "${LOG_FILE}"
-    echo "$DOCKER_PASSWORD" | sudo docker login -u "$DOCKER_USERNAME" --password-stdin 2>&1 | tee -a "${LOG_FILE}"
     
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    # Capture login output and exit code
+    LOGIN_OUTPUT=$(mktemp)
+    echo "$DOCKER_PASSWORD" | sudo docker login -u "$DOCKER_USERNAME" --password-stdin > "$LOGIN_OUTPUT" 2>&1
+    LOGIN_EXIT_CODE=$?
+    
+    cat "$LOGIN_OUTPUT" | tee -a "${LOG_FILE}"
+    rm -f "$LOGIN_OUTPUT"
+    
+    if [ $LOGIN_EXIT_CODE -ne 0 ]; then
         echo "[$(date)] Error: Docker login failed" | tee -a "${LOG_FILE}"
         return 1
     fi
@@ -68,10 +75,17 @@ login_to_docker || exit 1
 echo "[$(date)] Checking for local Docker image: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
 if ! sudo docker image inspect "${IMAGE_NAME}" &> /dev/null; then
     echo "[$(date)] Local image not found, pulling from Docker Hub: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
-    sudo docker pull "${IMAGE_NAME}" 2>&1 | tee -a "${LOG_FILE}"
+    
+    # Capture pull output and exit code
+    PULL_OUTPUT=$(mktemp)
+    sudo docker pull "${IMAGE_NAME}" > "$PULL_OUTPUT" 2>&1
+    PULL_EXIT_CODE=$?
+    
+    cat "$PULL_OUTPUT" | tee -a "${LOG_FILE}"
+    rm -f "$PULL_OUTPUT"
     
     # Check if pull was successful
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    if [ $PULL_EXIT_CODE -ne 0 ]; then
         echo "[$(date)] Error: Failed to pull Docker image from Docker Hub" | tee -a "${LOG_FILE}"
         echo "[$(date)] Please ensure the image ${IMAGE_NAME} exists on Docker Hub" | tee -a "${LOG_FILE}"
         exit 1
@@ -85,7 +99,7 @@ fi
 echo "[$(date)] Starting container..." | tee -a "${LOG_FILE}"
 
 # Build Docker run command based on GPU availability
-DOCKER_CMD="sudo docker run --name \"${CONTAINER_NAME}\" --rm"
+DOCKER_CMD="sudo docker run --name \"${CONTAINER_NAME}\""
 
 if [ $GPU_AVAILABLE -eq 0 ]; then
     echo "[$(date)] Running with GPU support" | tee -a "${LOG_FILE}"
@@ -96,20 +110,37 @@ fi
 
 DOCKER_CMD="$DOCKER_CMD -v \"$(pwd)/data:/app/data\" -v \"$(pwd)/projects_yaml:/app/projects_yaml\" -v \"$(pwd)/output:/app/output\" \"${IMAGE_NAME}\""
 
-# Execute the Docker command
+# Execute the Docker command and stream output
+# Note: Not using --rm to ensure we can get exit code reliably
+echo "[$(date)] Executing Docker container..." | tee -a "${LOG_FILE}"
+echo "[$(date)] Command: $DOCKER_CMD" | tee -a "${LOG_FILE}"
+
+# Run container and capture output while it runs
+# Use set -o pipefail to ensure we get the docker command's exit code, not tee's
+set -o pipefail
 eval "$DOCKER_CMD" 2>&1 | tee -a "${LOG_FILE}"
+DOCKER_EXIT_CODE=$?
+set +o pipefail
 
 # Check if container ran successfully
-if [ ${PIPESTATUS[0]} -eq 0 ]; then
-    echo "[$(date)] Container executed successfully" | tee -a "${LOG_FILE}" 
-    # Copy any output files from container if needed
-    # docker cp "${CONTAINER_NAME}:/path/in/container" "${OUTPUT_DIR}/"
-    
-    # Clean up
-    sudo docker rm "${CONTAINER_NAME}" 2>/dev/null
-    echo "[$(date)] Container cleaned up" | tee -a "${LOG_FILE}"
+echo "[$(date)] Container finished with exit code: $DOCKER_EXIT_CODE" | tee -a "${LOG_FILE}"
+
+if [ "$DOCKER_EXIT_CODE" -eq 0 ]; then
+    echo "[$(date)] Container executed successfully" | tee -a "${LOG_FILE}"
 else
-    echo "[$(date)] Error: Container execution failed" | tee -a "${LOG_FILE}"
+    echo "[$(date)] Error: Container execution failed with exit code $DOCKER_EXIT_CODE" | tee -a "${LOG_FILE}"
+    # Show last 50 lines of container logs for debugging
+    echo "[$(date)] Last 50 lines of container logs:" | tee -a "${LOG_FILE}"
+    sudo docker logs --tail 50 "${CONTAINER_NAME}" 2>&1 | tee -a "${LOG_FILE}"
+fi
+
+# Clean up container
+echo "[$(date)] Removing container..." | tee -a "${LOG_FILE}"
+sudo docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+# Exit with container's exit code
+if [ "$DOCKER_EXIT_CODE" -ne 0 ]; then
+    echo "[$(date)] Script exiting with code $DOCKER_EXIT_CODE" | tee -a "${LOG_FILE}"
     exit 1
 fi
 

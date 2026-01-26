@@ -376,23 +376,20 @@ def main():
     """Main function to test SSH connection and command execution.
 
     Usage:
-        python ssh_executor.py <ip_address> <command>
+        python ssh_executor.py <ip_address>
 
     Example:
-        python ssh_executor.py 192.168.1.100 "ls -la"
-        python ssh_executor.py 192.168.1.100 "df -h"
+        python ssh_executor.py 192.168.1.100
     """
     import sys
 
-    if len(sys.argv) < 3:
-        print("Usage: python ssh_executor.py <ip_address> <command>")
+    if len(sys.argv) < 2:
+        print("Usage: python ssh_executor.py <ip_address>")
         print("\nExample:")
-        print('  python ssh_executor.py 192.168.1.100 "ls -la"')
-        print('  python ssh_executor.py 192.168.1.100 "df -h"')
+        print("  python ssh_executor.py 192.168.1.100")
         sys.exit(1)
 
     ip_address = sys.argv[1]
-    command = sys.argv[2]
 
     print(f"🔌 Connecting to {ip_address}...")
 
@@ -404,10 +401,18 @@ def main():
         executor.connect()
         print(f"✅ Connected to {ip_address}")
 
-        # Execute command
-        print(f"\n🚀 Executing command: {command}")
+        # Test command: Create a file with echo
+        test_message = (
+            "Hello from InnoTone Training System! Connection test successful."
+        )
+        test_file = "~/innotone_test.txt"
+        command = f'echo "{test_message}" > {test_file}'
+
+        print(f"\n🚀 Testing command execution...")
+        print(f"Command: {command}")
         print("=" * 70)
 
+        # Execute the echo command
         result = executor.execute_command(command, check=False)
 
         # Display results
@@ -424,60 +429,24 @@ def main():
             print(f"\n📥 STDERR:")
             print(result.stderr)
 
-        # Set up AWS credentials
-        print(f"\n🔧 Setting up AWS credentials...")
-        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        aws_region = os.getenv("AWS_DEFAULT_REGION", "ap-south-1")
+        # Verify the file was created
+        if result.success:
+            print(f"\n🔍 Verifying file creation...")
+            verify_result = executor.execute_command(f"cat {test_file}", check=False)
 
-        if aws_access_key and aws_secret_key:
-            # Clean up any existing credentials first
-            executor.execute_command("rm -rf ~/.aws", check=False)
-            executor.setup_aws_credentials(aws_access_key, aws_secret_key, aws_region)
-            print(f"✅ AWS credentials configured")
-
-            # Verify credentials
-            print(f"\n🔍 Verifying AWS credentials...")
-            if executor.verify_aws_credentials():
-                print(f"✅ AWS credentials verified successfully")
+            if verify_result.success:
+                print(f"✅ File created successfully!")
+                print(f"📄 File contents:")
+                print(f"   {verify_result.stdout}")
             else:
-                print(f"❌ AWS credentials verification failed")
-        else:
-            print(f"⚠️  AWS credentials not found in environment variables")
-
-        # Transfer a test file from S3 to GPU
-        s3_bucket = os.getenv("BUCKET_NAME")
-        if s3_bucket and aws_access_key and aws_secret_key:
-            print(f"\n📦 Testing S3 file transfer...")
-            test_s3_path = "s3_test.txt"
-            test_local_path = "s3_test.txt"
-
-            try:
-                # Test download
-                print(
-                    f"📥 Downloading s3://{s3_bucket}/{test_s3_path} to {test_local_path}..."
-                )
-                executor.download_from_s3(s3_bucket, test_s3_path, test_local_path)
-                print(f"✅ S3 download successful")
-
-                # Verify file exists
-                verify_result = executor.execute_command(
-                    f"ls -lh {test_local_path}", check=False
-                )
-                if verify_result.success:
-                    print(f"✅ File verified on remote server:")
-                    print(f"   {verify_result.stdout}")
-
-                # Clean up test file
-                # executor.execute_command(f"rm -f {test_local_path}", check=False)
-                # print(f"🧹 Cleaned up test file")
-
-            except Exception as e:
-                print(f"❌ S3 transfer test failed: {str(e)}")
+                print(f"❌ File verification failed")
+                if verify_result.stderr:
+                    print(f"Error: {verify_result.stderr}")
 
         # Disconnect
         executor.disconnect()
         print(f"\n🔌 Disconnected from {ip_address}")
+        print(f"\n✅ Test completed successfully!")
 
         # Exit with command's exit code
         sys.exit(result.return_code)

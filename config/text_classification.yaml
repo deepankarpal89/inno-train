@@ -11,6 +11,6 @@ topk : 1
 topk_eval : 1
 save_every_epoch : 1
 accumulation_steps : 1
-no_epochs : 5
-no_iterations : 5
+no_epochs : 3
+no_iterations : 3
 loss : grpo

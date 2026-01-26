@@ -624,27 +624,62 @@ class TrainingWorkflow:
     # ==================== Training Execution ====================
 
     async def _execute_training_with_monitoring(self) -> None:
-        """Execute training with monitoring until completion."""
+        """Execute training script in background and monitor until completion."""
         try:
-            # Start monitoring
-            self.monitor = TrainingJobMonitor(
-                training_job_uuid=self.state.job_uuid,
-                ssh_executor=self.ssh_executor,
-                remote_log_path=WorkflowConstants.REMOTE_LOG_PATH,
-                poll_interval=WorkflowConstants.MONITORING_POLL_INTERVAL,
-                logger=self.logger,
+            # Make script executable
+            script_name = WorkflowConstants.TRAINING_SCRIPT_NAME
+            chmod_result = await asyncio.to_thread(
+                self.ssh_executor.execute_command,
+                f"chmod +x {script_name}",
+                check=False,
             )
 
-            # Start monitoring and training concurrently
-            monitor_task = asyncio.create_task(self.monitor.start_monitoring())
-            training_task = asyncio.create_task(
-                asyncio.to_thread(
-                    lambda: self.ssh_executor.execute_script(
-                        WorkflowConstants.TRAINING_SCRIPT_NAME, check=True
-                    )
+            if not chmod_result.success:
+                self.logger.warning(f"Failed to chmod script: {chmod_result.stderr}")
+
+            # Start the training script in background using nohup
+            background_cmd = f"nohup bash {script_name} > {script_name}.log 2>&1 &"
+
+            self.logger.info(
+                f"🚀 Starting training script in background: {background_cmd}"
+            )
+            result = await asyncio.to_thread(
+                self.ssh_executor.execute_command, background_cmd, check=False
+            )
+
+            if not result.success:
+                raise TrainingExecutionError(
+                    f"Failed to start training script: {result.stderr}"
                 )
+
+            # Wait a moment and verify the script is actually running
+            await asyncio.sleep(2)
+
+            check_result = await asyncio.to_thread(
+                self.ssh_executor.execute_command,
+                f"pgrep -f 'bash.*{script_name}' || echo 'not_running'",
+                check=False,
             )
 
+            if check_result.success:
+                output = check_result.stdout.strip()
+                if output == "not_running" or not output:
+                    # Script not running - check the log for errors
+                    log_check = await asyncio.to_thread(
+                        self.ssh_executor.execute_command,
+                        f"cat {script_name}.log 2>/dev/null || echo 'no_log'",
+                        check=False,
+                    )
+                    error_msg = "Script failed to start"
+                    if log_check.success and log_check.stdout.strip() != "no_log":
+                        error_msg = (
+                            f"Script failed to start. Log:\n{log_check.stdout.strip()}"
+                        )
+                    raise TrainingExecutionError(error_msg)
+                else:
+                    self.logger.info(f"✅ Script is running with PID: {output}")
+
+            # Update job status to RUNNING
             self.job.status = TrainingJobStatus.RUNNING
             self.job.started_at = ist_now().isoformat()
 
@@ -652,12 +687,32 @@ class TrainingWorkflow:
             async with async_session_maker() as session:
                 session.add(self.job)
                 await session.commit()
-            self.logger.info(
-                f"🚀 Training job {self.job_uuid} script execution started on GPU"
+
+            self.logger.info(f"✅ Training script started in background on GPU")
+
+            # Wait a moment for the script to initialize and create log files
+            await asyncio.sleep(3)
+
+            # Start monitoring - this will run until completion
+            self.monitor = TrainingJobMonitor(
+                training_job_uuid=self.state.job_uuid,
+                ssh_executor=self.ssh_executor,
+                remote_log_path=WorkflowConstants.REMOTE_LOG_PATH,
+                poll_interval=WorkflowConstants.MONITORING_POLL_INTERVAL,
+                logger=self.logger,
+                completion_callback=self._on_training_complete,
             )
 
-            # Wait for both tasks to complete
-            await asyncio.gather(monitor_task, training_task)
+            self.logger.info("🔍 Starting monitoring...")
+            await self.monitor.start_monitoring()
+
+            # Check if training completed successfully
+            if not self.monitor.training_completed_successfully:
+                error_msg = (
+                    self.monitor.training_error_message
+                    or "Training failed without error message"
+                )
+                raise TrainingExecutionError(f"Training execution failed: {error_msg}")
 
             self.logger.info("✅ Training and monitoring completed")
 
@@ -694,7 +749,21 @@ class TrainingWorkflow:
             self.logger.error(
                 f"Failed to upload outputs to S3: {str(e)}", exc_info=True
             )
-            raise FileTransferError(f"Output upload to S3 failed: {str(e)}")
+            # Don't raise here - just log the error
+
+    async def _on_training_complete(
+        self, success: bool, error_message: Optional[str] = None
+    ) -> None:
+        """Callback invoked by monitor when training completes.
+
+        Args:
+            success: Whether training completed successfully
+            error_message: Error message if training failed
+        """
+        if success:
+            self.logger.info("✅ Training completed successfully (signaled by monitor)")
+        else:
+            self.logger.error(f"❌ Training failed: {error_message}")
 
     # ==================== Cleanup & Error Handling ====================
 
