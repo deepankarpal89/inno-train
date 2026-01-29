@@ -637,14 +637,19 @@ class TrainingWorkflow:
             if not chmod_result.success:
                 self.logger.warning(f"Failed to chmod script: {chmod_result.stderr}")
 
-            # Start the training script in background using nohup
-            background_cmd = f"nohup bash {script_name} > {script_name}.log 2>&1 &"
+            # Start the training script in background using nohup + disown
+            # NOTE: We avoid 'setsid' because it creates a new session that loses NVIDIA cgroup 
+            # membership, causing GPU access to fail on single-GPU machines.
+            # Using 'bash -c' with 'disown' keeps the process in the same session while still
+            # detaching it from the SSH connection.
+            # get_pty=False is critical - PTY allocation would kill the background process when SSH closes
+            background_cmd = f"bash -c 'nohup bash {script_name} > {script_name}.log 2>&1 & disown'"
 
             self.logger.info(
                 f"🚀 Starting training script in background: {background_cmd}"
             )
             result = await asyncio.to_thread(
-                self.ssh_executor.execute_command, background_cmd, check=False
+                self.ssh_executor.execute_command, background_cmd, False, False  # check=False, get_pty=False
             )
 
             if not result.success:

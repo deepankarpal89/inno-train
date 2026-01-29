@@ -103,7 +103,19 @@ class SshExecutor:
             self.client.close()
             self.client = None
 
-    def execute_command(self, command: str, check=True):
+    def execute_command(self, command: str, check=True, get_pty=True):
+        """Execute a command on the remote server.
+        
+        Args:
+            command: The command to execute
+            check: If True, raise exception on non-zero exit code
+            get_pty: If True, allocate a pseudo-terminal. Set to False for 
+                     background commands (nohup) to prevent the process from 
+                     being killed when the SSH session closes.
+        
+        Returns:
+            CommandResult: Result of the command execution
+        """
         if self.client is None:
             raise Exception(
                 "SSH connection not established. Call connect() or connect_async() first."
@@ -112,7 +124,7 @@ class SshExecutor:
         start_time = time.time()
         try:
             stdin, stdout, stderr = self.client.exec_command(
-                command, timeout=self.timeout, get_pty=True
+                command, timeout=self.timeout, get_pty=get_pty
             )
             exit_status = stdout.channel.recv_exit_status()
             stdout_str = stdout.read().decode("utf-8").strip()
