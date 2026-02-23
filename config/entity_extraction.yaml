@@ -1,10 +1,10 @@
 trajectory_name: run_1
 training_name: run_1
-trajectory_count: 2
+trajectory_count: 10
 ref_model_name: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 model_name: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
-max_new_tokens: 2
-reward : classify_entity
+max_new_tokens: 250
+reward : entity_extraction
 model_epoch : 1
 start_iteration : 1
 topk : 1

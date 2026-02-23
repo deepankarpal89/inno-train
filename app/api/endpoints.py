@@ -10,6 +10,8 @@ from sqlalchemy import select
 import datetime
 from datetime import timezone
 import os
+import json
+from pathlib import Path
 
 from app.database import get_session
 from app.services.training_workflow import TrainingWorkflow, JobNotFoundError
@@ -125,7 +127,7 @@ class EvalFilePathsResponse(BaseModel):
 
     job_uuid: str
     train_file_path: Optional[str] = None
-    cv_file_path: Optional[str] = None
+    eval_file_path: Optional[str] = None
     best_iteration: Optional[int] = None
     best_epoch: Optional[int] = None
     success: bool
@@ -190,30 +192,45 @@ async def start_training_job(
 ):
 
     try:
-        print("request", request)
+        logger.info("=" * 70)
+        logger.info("📥 TRAINING REQUEST RECEIVED")
+        logger.info("=" * 70)
+        logger.info(f"Request Data: {request.model_dump()}")
+        logger.info("=" * 70)
+
         # Initialize job record first
         workflow = TrainingWorkflow.for_new_job(logger=logger)
         job_uuid = await workflow._initialize_job(request.model_dump())
 
+        # Save request data to test_requests folder
+        test_requests_dir = Path("test_requests")
+        test_requests_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        request_file = test_requests_dir / f"request_{timestamp}_{job_uuid}.json"
+
+        with open(request_file, "w") as f:
+            json.dump(request.model_dump(), f, indent=2, default=str)
+
+        logger.info(f"✅ Job initialized with UUID: {job_uuid}")
+        logger.info(f"💾 Request saved to: {request_file}")
+        logger.info(f"⏸️  Training execution SKIPPED (logging mode)")
+        logger.info("=" * 70)
+
+        # SKIP TRAINING EXECUTION - Just log and return
         future = TRAINING_EXECUTOR.submit(
             _run_training_job_background_sync, request.model_dump(), job_uuid
         )
 
-        # # Optional: Add callback to handle completion
-        # future.add_done_callback(
-        #     lambda f: logger.info(f"Job {job_uuid} completed with status {f.result()}")
-        # )
-        logger.info(f"Training job {job_uuid} queued for background execution")
-
         return TrainingResponse(
             success=True,
-            message="Training job started successfully",
+            message="Training job logged successfully (execution skipped)",
             job_uuid=job_uuid,
             status="pending",
         )
 
     except Exception as e:
-        logger.error(f"Failed to start training job: {str(e)}")
+        logger.error(f"❌ Failed to process training request: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -473,8 +490,8 @@ async def get_accuracy_metrics(
 
         metrics = {
             "train_accuracy": job_metrics.get("best_eval_train", {}).get("accuracy"),
-            "eval_accuracy": job_metrics.get("best_eval_cv", {}).get("accuracy"),
-            "best_eval_uuid": job_metrics.get("best_eval_cv", {}).get("eval_uuid"),
+            "eval_accuracy": job_metrics.get("best_eval_eval", {}).get("accuracy"),
+            "best_eval_uuid": job_metrics.get("best_eval_eval", {}).get("eval_uuid"),
         }
 
         stmt = (
@@ -509,7 +526,7 @@ async def get_accuracy_metrics(
 
             # Extract train and eval accuracies from iteration_metadata
             train_accuracy = iter_metrics.get("best_eval_train", {}).get("accuracy")
-            eval_accuracy = iter_metrics.get("best_eval_cv", {}).get("accuracy")
+            eval_accuracy = iter_metrics.get("best_eval_eval", {}).get("accuracy")
 
             train_accuracies.append(train_accuracy)
             eval_accuracies.append(eval_accuracy)
@@ -539,7 +556,7 @@ async def get_eval_file_paths(
     job_uuid: str, session: AsyncSession = Depends(get_session)
 ):
     """
-    Get S3 file paths for train and CV evaluation files based on best iteration.
+    Get S3 file paths for train and eval evaluation files based on best iteration.
 
     Constructs S3 URIs for evaluation files using the best iteration metadata
     from the job's metadata field.
@@ -549,7 +566,7 @@ async def get_eval_file_paths(
         session: Database session
 
     Returns:
-        EvalFilePathsResponse: S3 file paths for train and CV evaluation files
+        EvalFilePathsResponse: S3 file paths for train and eval evaluation files
     """
     try:
         stmt = select(TrainingJob).where(TrainingJob.uuid == job_uuid)
@@ -567,7 +584,7 @@ async def get_eval_file_paths(
             return EvalFilePathsResponse(
                 job_uuid=job_uuid,
                 train_file_path=None,
-                cv_file_path=None,
+                eval_file_path=None,
                 best_iteration=None,
                 best_epoch=None,
                 success=False,
@@ -580,16 +597,16 @@ async def get_eval_file_paths(
             return EvalFilePathsResponse(
                 job_uuid=job_uuid,
                 train_file_path=None,
-                cv_file_path=None,
+                eval_file_path=None,
                 best_iteration=None,
                 best_epoch=None,
                 success=False,
                 message="No best_iteration found in job metadata",
             )
 
-        # Extract epoch number from best_eval_cv model_id (format: "iteration_X_epoch_Y")
-        best_eval_cv = job_metrics.get("best_eval_cv", {})
-        model_id = best_eval_cv.get("model_id", "")
+        # Extract epoch number from best_eval_eval model_id (format: "iteration_X_epoch_Y")
+        best_eval_eval = job_metrics.get("best_eval_eval", {})
+        model_id = best_eval_eval.get("model_id", "")
 
         # Parse epoch number from model_id
         best_epoch = None
@@ -605,7 +622,7 @@ async def get_eval_file_paths(
             return EvalFilePathsResponse(
                 job_uuid=job_uuid,
                 train_file_path=None,
-                cv_file_path=None,
+                eval_file_path=None,
                 best_iteration=best_iteration,
                 best_epoch=None,
                 success=False,
@@ -626,12 +643,12 @@ async def get_eval_file_paths(
 
         # Construct file paths
         train_file_path = f"{base_path}/eval_train_epoch_{best_epoch}.csv"
-        cv_file_path = f"{base_path}/eval_cv_epoch_{best_epoch}.csv"
+        eval_file_path = f"{base_path}/eval_eval_epoch_{best_epoch}.csv"
 
         return EvalFilePathsResponse(
             job_uuid=job_uuid,
             train_file_path=train_file_path,
-            cv_file_path=cv_file_path,
+            eval_file_path=eval_file_path,
             best_iteration=best_iteration,
             best_epoch=best_epoch,
             success=True,

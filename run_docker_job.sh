@@ -6,7 +6,7 @@ ARCH="$(uname -m)"
 if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
     IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_lambda"  # ARM image
 elif [[ "$ARCH" == "x86_64" ]]; then
-    IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_amd64"   # AMD64 image
+    IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_combined_amd64"   # AMD64 image
 else
     IMAGE_NAME="deepankarpal89/innotone:ddp_rlhf_text_multi"   # Multi-arch image for other architectures
 fi
@@ -91,6 +91,7 @@ if ! sudo docker image inspect "${IMAGE_NAME}" &> /dev/null; then
         exit 1
     fi
     echo "[$(date)] Successfully pulled Docker image from Docker Hub" | tee -a "${LOG_FILE}"
+    sleep 5
 else
     echo "[$(date)] Using local Docker image: ${IMAGE_NAME}" | tee -a "${LOG_FILE}"
 fi

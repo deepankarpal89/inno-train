@@ -53,17 +53,18 @@ class LambdaClient:
         """Get the cheapest available GPU instance."""
         data = self._make_request("GET", "/instance-types")["data"]
 
-        # Filter for available instances (any GPU count) and x86 architecture only
+        # Filter for available A100 instances (x86 architecture only)
         avail_gpus = {
             k: v
             for k, v in data.items()
             if len(v["regions_with_capacity_available"]) > 0
             and self.get_gpu_architecture(k) == "x86"
+            and "a10" in k.lower()
         }
 
         # Check if any instances are available
         if not avail_gpus:
-            self.logger.info("No x86 GPU instances currently available")
+            self.logger.info("No A100 GPU instances currently available")
             return None
 
         # Sort by price and select cheapest

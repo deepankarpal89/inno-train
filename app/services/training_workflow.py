@@ -566,12 +566,14 @@ class TrainingWorkflow:
         s3_bucket = self.job_s3_bucket
         yaml_data = self.state.yaml_builder.yaml_data
 
-        # Create directories on GPU
+        # Create directories on GPU (including image directories)
         await asyncio.to_thread(
-            self.ssh_executor.execute_command, "mkdir -p data projects_yaml", check=True
+            self.ssh_executor.execute_command,
+            "mkdir -p data projects_yaml data/train/images data/eval/images",
+            check=True,
         )
 
-        # Download files from S3 in parallel
+        # Download CSV files and config from S3 in parallel
         download_tasks = [
             self._download_file_from_s3(
                 s3_bucket, yaml_data[s3_key], yaml_data[path_key], description
@@ -579,8 +581,35 @@ class TrainingWorkflow:
             for s3_key, path_key, description in WorkflowConstants.TRANSFER_CONFIGS
         ]
 
+        # Download image directories if they exist in the YAML
+        if (
+            "train_image_root_s3_path" in yaml_data
+            and "train_image_root_path" in yaml_data
+        ):
+            download_tasks.append(
+                self._download_directory_from_s3(
+                    s3_bucket,
+                    yaml_data["train_image_root_s3_path"],
+                    yaml_data["train_image_root_path"],
+                    "training images",
+                )
+            )
+
+        if (
+            "eval_image_root_s3_path" in yaml_data
+            and "eval_image_root_path" in yaml_data
+        ):
+            download_tasks.append(
+                self._download_directory_from_s3(
+                    s3_bucket,
+                    yaml_data["eval_image_root_s3_path"],
+                    yaml_data["eval_image_root_path"],
+                    "evaluation images",
+                )
+            )
+
         await asyncio.gather(*download_tasks)
-        self.logger.info("✅ All files downloaded from S3 to GPU")
+        self.logger.info("✅ All files and images downloaded from S3 to GPU")
 
         # Upload training script (still needed)
         await self._upload_training_script()
@@ -591,12 +620,30 @@ class TrainingWorkflow:
         """Download a single file from S3 to GPU server."""
         try:
             await asyncio.to_thread(
-                self.ssh_executor.download_from_s3, s3_bucket, s3_path, local_path
+                self.ssh_executor.download_from_s3,
+                s3_bucket,
+                s3_path,
+                local_path,
+                False,
             )
             self.logger.info(f"📥 Downloaded {description} from S3")
         except Exception as e:
             raise FileTransferError(
                 f"Failed to download {description} from S3: {str(e)}"
+            )
+
+    async def _download_directory_from_s3(
+        self, s3_bucket: str, s3_path: str, local_path: str, description: str
+    ) -> None:
+        """Download a directory recursively from S3 to GPU server."""
+        try:
+            await asyncio.to_thread(
+                self.ssh_executor.download_from_s3, s3_bucket, s3_path, local_path, True
+            )
+            self.logger.info(f"📥 Downloaded {description} directory from S3")
+        except Exception as e:
+            raise FileTransferError(
+                f"Failed to download {description} directory from S3: {str(e)}"
             )
 
     async def _upload_training_script(self) -> None:
@@ -638,18 +685,23 @@ class TrainingWorkflow:
                 self.logger.warning(f"Failed to chmod script: {chmod_result.stderr}")
 
             # Start the training script in background using nohup + disown
-            # NOTE: We avoid 'setsid' because it creates a new session that loses NVIDIA cgroup 
+            # NOTE: We avoid 'setsid' because it creates a new session that loses NVIDIA cgroup
             # membership, causing GPU access to fail on single-GPU machines.
             # Using 'bash -c' with 'disown' keeps the process in the same session while still
             # detaching it from the SSH connection.
             # get_pty=False is critical - PTY allocation would kill the background process when SSH closes
-            background_cmd = f"bash -c 'nohup bash {script_name} > {script_name}.log 2>&1 & disown'"
+            background_cmd = (
+                f"bash -c 'nohup bash {script_name} > {script_name}.log 2>&1 & disown'"
+            )
 
             self.logger.info(
                 f"🚀 Starting training script in background: {background_cmd}"
             )
             result = await asyncio.to_thread(
-                self.ssh_executor.execute_command, background_cmd, False, False  # check=False, get_pty=False
+                self.ssh_executor.execute_command,
+                background_cmd,
+                False,
+                False,  # check=False, get_pty=False
             )
 
             if not result.success:

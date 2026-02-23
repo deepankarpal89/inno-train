@@ -93,7 +93,7 @@ class ProjectYamlBuilder:
         self.yaml_data["project_name"] = project.get("name", "")
         self.yaml_data["project_id"] = project.get("id", "")
         self.yaml_data["project_description"] = project.get("description", "")
-        self.yaml_data["project_task_type"] = project.get(
+        self.yaml_data["task_type"] = project.get(
             "task_type", "text_classification"
         )
         self.yaml_data["training_run_id"] = data.get("training_run_id", "")
@@ -128,6 +128,17 @@ class ProjectYamlBuilder:
         )
         self.yaml_data["train_file_path"] = f"data/{self.yaml_data['train_file_name']}"
 
+        # Add column mappings
+        self.yaml_data["train_input_col"] = dataset.get("input_col", "")
+        self.yaml_data["train_output_cols"] = dataset.get("output_cols", [])
+        self.yaml_data["train_think_col"] = dataset.get("think_col", "")
+
+        image_root = dataset.get("image_root", "")
+        if image_root:
+            self.yaml_data["train_image_root_s3_path"] = f"media/{image_root}"
+            self.yaml_data["train_image_root_path"] = "data/train_images"
+        self.yaml_data["train_image_root"] = image_root
+
     def _add_eval_dataset(self, data):
         if not data or "eval_dataset" not in data or not data["eval_dataset"]:
             raise ValueError("Invalid data: 'eval_dataset' key is missing or empty")
@@ -139,7 +150,17 @@ class ProjectYamlBuilder:
             self.yaml_data["eval_s3_path"]
         )
         self.yaml_data["eval_file_path"] = f"data/{self.yaml_data['eval_file_name']}"
-        self.yaml_data["cv_file_path"] = self.yaml_data["eval_file_path"]
+
+        # Add column mappings
+        self.yaml_data["eval_input_col"] = dataset.get("input_col", "")
+        self.yaml_data["eval_output_cols"] = dataset.get("output_cols", [])
+        self.yaml_data["eval_think_col"] = dataset.get("think_col", "")
+
+        image_root = dataset.get("image_root", "")
+        if image_root:
+            self.yaml_data["eval_image_root_s3_path"] = f"media/{image_root}"
+            self.yaml_data["eval_image_root_path"] = "data/eval_images"
+        self.yaml_data["eval_image_root"] = image_root
 
     def _add_reward(self):
         self.yaml_data["reward"] = self.task_config.get("reward", "classify_text")
@@ -201,7 +222,7 @@ class ProjectYamlBuilder:
         self._add_eval_dataset(data)
 
         # Load task-specific configuration
-        task_type = self.yaml_data.get("project_task_type", "text_classification")
+        task_type = self.yaml_data.get("task_type", "text_classification")
         self.task_config = self._load_task_config(task_type)
 
         # Add task-specific configurations

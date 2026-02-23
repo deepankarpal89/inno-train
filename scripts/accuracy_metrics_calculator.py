@@ -40,7 +40,7 @@ class AccuracyMetricsCalculator:
                 ] = {"iteration_uuid": training_iteration.uuid}
 
     async def get_eval_for_iteration(self, iteration_number: int) -> None:
-        iteration_uuid = self.data[iteration_number]["cv"]["iteration_uuid"]
+        iteration_uuid = self.data[iteration_number]["eval"]["iteration_uuid"]
         stmt = select(Eval).where(Eval.iteration_uuid == iteration_uuid)
         async with async_session_maker() as session:
             result = await session.execute(stmt)
@@ -61,7 +61,7 @@ class AccuracyMetricsCalculator:
                     iteration_number = int(e.model_id.split("_")[1])
             self.logger.info(f"Best run: {best_eval.uuid if best_eval else 'None'}")
             self.logger.info(f"Highest reward: {max_reward}")
-            self.data[iteration_number]["best_eval_cv"] = {
+            self.data[iteration_number]["best_eval_eval"] = {
                 "model_id": best_eval.model_id,
                 "accuracy": max_reward,
                 "eval_uuid": best_eval.uuid,
@@ -92,22 +92,30 @@ class AccuracyMetricsCalculator:
         best_accuracy = -1.0
 
         for iteration_number, iteration_data in self.data.items():
-            if "best_eval_cv" in iteration_data:
-                cv_accuracy = iteration_data["best_eval_cv"]["accuracy"]
+            if "best_eval_eval" in iteration_data:
+                eval_accuracy = iteration_data["best_eval_eval"]["accuracy"]
                 self.logger.info(
-                    f"Iteration {iteration_number}: CV Accuracy = {cv_accuracy}"
+                    f"Iteration {iteration_number}: eval Accuracy = {eval_accuracy}"
                 )
 
-                if cv_accuracy > best_accuracy:
-                    best_accuracy = cv_accuracy
+                if eval_accuracy > best_accuracy:
+                    best_accuracy = eval_accuracy
                     best_iteration = iteration_number
 
         self.logger.info(f"Best iteration: {best_iteration}")
-        self.logger.info(f"Highest CV accuracy: {best_accuracy}")
+        self.logger.info(f"Highest eval accuracy: {best_accuracy}")
+
+        if best_iteration is None:
+            self.logger.warning("No valid iterations found with evaluation data")
+            return {
+            "best_iteration": None,
+            "best_eval_eval": None,
+            "best_eval_train": None,
+            }
 
         return {
             "best_iteration": best_iteration,
-            "best_eval_cv": self.data[best_iteration]["best_eval_cv"],
+            "best_eval_eval": self.data[best_iteration]["best_eval_eval"],
             "best_eval_train": self.data[best_iteration]["best_eval_train"],
         }
 
@@ -125,7 +133,7 @@ class AccuracyMetricsCalculator:
                     continue
                 existing_metadata = training_iteration.iteration_metadata or {}
                 existing_metadata["metrics"] = {
-                    "best_eval_cv": self.data[iteration_number]["best_eval_cv"],
+                    "best_eval_eval": self.data[iteration_number]["best_eval_eval"],
                     "best_eval_train": self.data[iteration_number]["best_eval_train"],
                 }
                 training_iteration.iteration_metadata = existing_metadata

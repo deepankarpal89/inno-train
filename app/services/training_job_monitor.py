@@ -680,7 +680,9 @@ class TrainingJobMonitor:
         config = data.get("config", {})
 
         if event_type == "start":
-            iteration_number = config.get("current_iteration")
+            # Extract iteration number from nested runtime config
+            runtime_config = config.get("runtime", {})
+            iteration_number = runtime_config.get("current_iteration")
             self.current_iteration_number = iteration_number
             # Parse timestamp from event
             event_timestamp = self._get_timestamp(event)
@@ -739,7 +741,7 @@ class TrainingJobMonitor:
             config = data.get("config", {})
 
             # Create a trajectory generation step with SQLAlchemy
-            if self.current_iteration:
+            if self.current_iteration and self.current_iteration_number is not None:
                 self.current_trajectory = TrainingIteration(
                     uuid=str(uuid.uuid4()),
                     training_job_uuid=self.training_job.uuid,
@@ -757,7 +759,11 @@ class TrainingJobMonitor:
                     f"🎯 Trajectory generation started for iteration {self.current_iteration_number}"
                 )
             else:
-                self.logger.warning("No current iteration for trajectory generation")
+                self.logger.warning(
+                    f"No current iteration for trajectory generation. "
+                    f"current_iteration={self.current_iteration}, "
+                    f"current_iteration_number={self.current_iteration_number}"
+                )
 
         elif event_type == "end":
             # Critical null check - ensure current_trajectory exists
@@ -794,7 +800,7 @@ class TrainingJobMonitor:
             config = data.get("config", {})
 
             # Create a training step with SQLAlchemy
-            if self.current_iteration:
+            if self.current_iteration and self.current_iteration_number is not None:
                 self.current_training = TrainingIteration(
                     uuid=str(uuid.uuid4()),
                     training_job_uuid=self.training_job.uuid,
@@ -812,7 +818,11 @@ class TrainingJobMonitor:
                     f"🏋️ Training started for iteration {self.current_iteration_number}"
                 )
             else:
-                self.logger.warning("No current iteration for training")
+                self.logger.warning(
+                    f"No current iteration for training. "
+                    f"current_iteration={self.current_iteration}, "
+                    f"current_iteration_number={self.current_iteration_number}"
+                )
 
         elif event_type == "end":
             # Critical null check - ensure current_training exists
@@ -865,6 +875,15 @@ class TrainingJobMonitor:
                     return
             except (ValueError, TypeError):
                 self.logger.error(f"Invalid epoch format: {epoch}")
+                return
+
+            # Validate iteration_number exists
+            if self.current_iteration_number is None:
+                self.logger.error(
+                    f"Cannot create epoch train: iteration_number is None. "
+                    f"current_iteration={self.current_iteration}, "
+                    f"current_training={self.current_training}"
+                )
                 return
 
             # Create EpochTrain with SQLAlchemy
@@ -926,7 +945,7 @@ class TrainingJobMonitor:
             config = data.get("config", {})
 
             # Create an evaluation step with SQLAlchemy
-            if self.current_iteration:
+            if self.current_iteration and self.current_iteration_number is not None:
                 self.current_evaluation = TrainingIteration(
                     uuid=str(uuid.uuid4()),
                     training_job_uuid=self.training_job.uuid,
@@ -944,7 +963,11 @@ class TrainingJobMonitor:
                     f"📈 Evaluation started for iteration {self.current_iteration_number}"
                 )
             else:
-                self.logger.warning("No current iteration for evaluation")
+                self.logger.warning(
+                    f"No current iteration for evaluation. "
+                    f"current_iteration={self.current_iteration}, "
+                    f"current_iteration_number={self.current_iteration_number}"
+                )
 
         elif event_type == "end":
             # Critical null check - ensure current_evaluation exists
@@ -1000,7 +1023,7 @@ class TrainingJobMonitor:
             model_path = data.get("model_path", "")
             config = data.get("config", {})
             model_epoch = config.get("model_epoch", "")
-            dataset = config.get("dataset", "cv")
+            dataset = config.get("dataset", "eval")
             training_name = config.get("training_name", "")
 
             # Create Eval record with SQLAlchemy
