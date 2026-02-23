@@ -380,7 +380,7 @@ async def main():
     """Main entry point for the test script."""
     import argparse
 
-    GPU_IP = "129.146.76.204"
+    GPU_IP = "129.80.50.39"
 
     parser = argparse.ArgumentParser(
         description="Test TrainingWorkflow file transfer functionality using YAML configuration"

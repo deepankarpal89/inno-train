@@ -189,7 +189,7 @@ async def hello_world():
 @router.post("/v1/training/start", response_model=TrainingResponse)
 async def start_training_job(
     request: TrainingRequest, background_tasks: BackgroundTasks
-):
+    ):
 
     try:
         logger.info("=" * 70)

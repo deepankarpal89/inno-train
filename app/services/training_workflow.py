@@ -226,6 +226,9 @@ class TrainingWorkflow:
             await self._provision_gpu_instance()
             await self._establish_ssh_connection()
 
+            # Setup docker permissions for GPU access
+            await self._setup_docker_permissions()
+
             # Transfer files
             await self._transfer_all_files()
 
@@ -524,6 +527,50 @@ class TrainingWorkflow:
                 )
                 await asyncio.sleep(wait_time)
 
+    async def _setup_docker_permissions(self) -> None:
+        """Setup docker group permissions on fresh GPU instance."""
+        try:
+            # Check if user is already in docker group
+            check_result = await asyncio.to_thread(
+                self.ssh_executor.execute_command,
+                "groups | grep -q docker && echo 'in_group' || echo 'not_in_group'",
+                check=False
+            )
+            
+            if 'not_in_group' in check_result.stdout:
+                self.logger.info("Adding ubuntu user to docker group...")
+                
+                # Add user to docker group
+                await asyncio.to_thread(
+                    self.ssh_executor.execute_command,
+                    "sudo usermod -aG docker ubuntu",
+                    check=True
+                )
+                
+                # Verify it was added
+                verify_result = await asyncio.to_thread(
+                    self.ssh_executor.execute_command,
+                    "id -nG ubuntu | grep -q docker && echo 'success' || echo 'failed'",
+                    check=False
+                )
+                
+                if 'success' in verify_result.stdout:
+                    self.logger.info("✅ User added to docker group successfully")
+
+                    # Reconnect SSH to activate the new group membership
+                    self.logger.info("🔄 Reconnecting SSH to activate docker group...")
+                    await asyncio.to_thread(self.ssh_executor.disconnect)
+                    await asyncio.sleep(2)
+                    await self._establish_ssh_connection()
+                    self.logger.info("✅ SSH reconnected with docker group active")
+                else:
+                    raise InfrastructureError("Failed to add user to docker group")
+            else:
+                self.logger.info("✅ User already in docker group")
+                
+        except Exception as e:
+            raise InfrastructureError(f"Failed to setup docker permissions: {str(e)}")
+
     # ==================== File Transfer ====================
 
     async def _setup_aws_on_gpu(self) -> None:
@@ -747,9 +794,19 @@ class TrainingWorkflow:
 
             self.logger.info(f"✅ Training script started in background on GPU")
 
+            # Disconnect SSH to match simple_gpu_run.py behavior and avoid session interference
+            self.logger.info("🔌 Disconnecting SSH after starting training...")
+            await asyncio.to_thread(self.ssh_executor.disconnect)
+            self.logger.info("✅ SSH disconnected")
+
             # Wait a moment for the script to initialize and create log files
             await asyncio.sleep(3)
 
+            # Reconnect SSH for monitoring
+            self.logger.info("🔌 Reconnecting SSH for monitoring...")
+            await self._establish_ssh_connection()
+            self.logger.info("✅ SSH reconnected for monitoring")
+            
             # Start monitoring - this will run until completion
             self.monitor = TrainingJobMonitor(
                 training_job_uuid=self.state.job_uuid,

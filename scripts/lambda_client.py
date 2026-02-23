@@ -59,7 +59,7 @@ class LambdaClient:
             for k, v in data.items()
             if len(v["regions_with_capacity_available"]) > 0
             and self.get_gpu_architecture(k) == "x86"
-            and "a10" in k.lower()
+            #and "a100" in k.lower()
         }
 
         # Check if any instances are available

@@ -100,7 +100,7 @@ fi
 echo "[$(date)] Starting container..." | tee -a "${LOG_FILE}"
 
 # Build Docker run command based on GPU availability
-DOCKER_CMD="sudo docker run --name \"${CONTAINER_NAME}\""
+DOCKER_CMD="docker run --name \"${CONTAINER_NAME}\""
 
 if [ $GPU_AVAILABLE -eq 0 ]; then
     echo "[$(date)] Running with GPU support" | tee -a "${LOG_FILE}"
@@ -132,12 +132,12 @@ else
     echo "[$(date)] Error: Container execution failed with exit code $DOCKER_EXIT_CODE" | tee -a "${LOG_FILE}"
     # Show last 50 lines of container logs for debugging
     echo "[$(date)] Last 50 lines of container logs:" | tee -a "${LOG_FILE}"
-    sudo docker logs --tail 50 "${CONTAINER_NAME}" 2>&1 | tee -a "${LOG_FILE}"
+    docker logs --tail 50 "${CONTAINER_NAME}" 2>&1 | tee -a "${LOG_FILE}"
 fi
 
 # Clean up container
 echo "[$(date)] Removing container..." | tee -a "${LOG_FILE}"
-sudo docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
 # Exit with container's exit code
 if [ "$DOCKER_EXIT_CODE" -ne 0 ]; then
@@ -147,7 +147,7 @@ fi
 
 # Logout from Docker Hub
 echo "[$(date)] Logging out from Docker Hub..." | tee -a "${LOG_FILE}"
-sudo docker logout 2>&1 | tee -a "${LOG_FILE}"
+docker logout 2>&1 | tee -a "${LOG_FILE}"
 
 echo "[$(date)] Job completed successfully!" | tee -a "${LOG_FILE}"
 echo "Logs saved to: ${LOG_FILE}"
